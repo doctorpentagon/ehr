@@ -2,8 +2,29 @@ import axios from 'axios';
 import { toast } from 'sonner';
 import { enqueue } from './offlineQueue';
 
+/**
+ * Where the API lives.
+ *
+ * Locally this stays relative: Vite proxies /v1 to localhost:8000, so the app
+ * and the API share an origin and there is no CORS to think about.
+ *
+ * Deployed, the frontend and the API are on different hosts, so a relative path
+ * would resolve to the frontend's own domain. It did — every API call went to
+ * Vercel, hit the single-page rewrite, came back as HTML, and failed as a JSON
+ * parse error with nothing on screen to explain it.
+ *
+ * VITE_API_URL is set at build time and may or may not already end in /v1, so
+ * normalise rather than trusting whoever typed it into the dashboard.
+ */
+function resolveBaseUrl() {
+  const configured = import.meta.env.VITE_API_URL;
+  if (!configured) return '/v1';
+  const trimmed = configured.replace(/\/+$/, '');
+  return /\/v\d+$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
+}
+
 const api = axios.create({
-  baseURL: '/v1',
+  baseURL: resolveBaseUrl(),
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
   timeout: 20000, // 20-second timeout — prevents indefinite hang when Supabase is paused
@@ -51,7 +72,10 @@ api.interceptors.response.use(
       original._retry = true;
       isRefreshing = true;
       try {
-        const { data } = await axios.post('/v1/auth/refresh', {}, { withCredentials: true });
+        // Bare axios, not the instance — so it must resolve the host the same
+        // way, or a deployed session silently fails to refresh and the user is
+        // logged out after fifteen minutes with no explanation.
+        const { data } = await axios.post(`${resolveBaseUrl()}/auth/refresh`, {}, { withCredentials: true });
         localStorage.setItem('accessToken', data.accessToken);
         processQueue(null, data.accessToken);
         original.headers.Authorization = `Bearer ${data.accessToken}`;

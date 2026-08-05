@@ -17,14 +17,42 @@ app.set('trust proxy', 1);
 // ── Security ────────────────────────────────────────────────────────────────
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
-const origins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:5173').split(',').map(s => s.trim());
+/**
+ * Which front-ends may call this API.
+ *
+ * Accepts either variable name: ALLOWED_ORIGINS is what this has always read,
+ * CORS_ORIGIN is what most hosting dashboards and our own .env.example call it.
+ * Honouring both costs nothing and removes a failure that is genuinely hard to
+ * diagnose — a browser reports it as a network error with no clue that the
+ * server simply did not recognise the name of the setting.
+ *
+ * Trailing slashes are stripped because an origin has no path, and pasting a
+ * site URL from the address bar almost always brings one along.
+ */
+const CORS_DEFAULTS = 'http://localhost:3000,http://localhost:5173,http://localhost:5177';
+const origins = (process.env.CORS_ORIGIN || process.env.ALLOWED_ORIGINS || CORS_DEFAULTS)
+  .split(',')
+  .map((s) => s.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
 const corsOptions = {
-  origin: process.env.NODE_ENV === 'development'
-    ? (origin, cb) => cb(null, true) // allow all in dev
-    : (origin, cb) => (!origin || origins.includes(origin) ? cb(null, true) : cb(new Error('CORS'))),
+  origin: (origin, cb) => {
+    // No origin: same-origin requests, curl, health checks.
+    if (!origin) return cb(null, true);
+    if (process.env.NODE_ENV === 'development') return cb(null, true);
+    if (origins.includes(origin.replace(/\/+$/, ''))) return cb(null, true);
+    // Refuse by omitting the header rather than throwing. Throwing turned every
+    // rejected request into a 500, so a misconfigured origin looked like the
+    // server was broken — including on endpoints that were working perfectly.
+    return cb(null, false);
+  },
   credentials: true,
 };
 app.use(cors(corsOptions));
+
+if (process.env.NODE_ENV === 'production') {
+  console.log(`  CORS allows: ${origins.join(', ')}`);
+}
 
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many requests' } }));
 
