@@ -35,6 +35,9 @@ README.html
 **/.env
 **/.env.*
 !**/.env.example
+# Generated production secrets. Plaintext on disk — never committed.
+*.local.txt
+PRODUCTION_SECRETS*
 *.pem
 *.key
 *.p12

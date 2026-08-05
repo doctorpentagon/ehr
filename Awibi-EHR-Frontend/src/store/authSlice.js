@@ -12,9 +12,10 @@ export const login = createAsyncThunk('auth/login', async ({ email, password }, 
   }
 });
 
-export const demoLogin = createAsyncThunk('auth/demoLogin', async ({ userId }, { rejectWithValue }) => {
+export const demoLogin = createAsyncThunk('auth/demoLogin', async ({ userId, accessCode }, { rejectWithValue }) => {
   try {
-    const res = await api.post('/auth/local-demo-login', { userId });
+    // A hosted demo may require a shared code; a local one never does.
+    const res = await api.post('/auth/local-demo-login', { userId, ...(accessCode ? { accessCode } : {}) });
     const { accessToken, user, facility } = res.data;
     if (accessToken) localStorage.setItem('accessToken', accessToken);
     return { user, facility };

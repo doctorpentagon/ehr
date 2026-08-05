@@ -39,6 +39,8 @@ export default function Login() {
   const { loading } = useSelector((s) => s.auth);
   const [demoAccounts, setDemoAccounts] = useState([]);
   const [demoAccountId, setDemoAccountId] = useState('');
+  const [demoMeta, setDemoMeta] = useState({ requiresAccessCode: false, hostedDemo: false });
+  const [accessCode, setAccessCode] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -48,6 +50,10 @@ export default function Login() {
         const accounts = data?.accounts || [];
         setDemoAccounts(accounts);
         setDemoAccountId(accounts[0]?.id || '');
+        setDemoMeta({
+          requiresAccessCode: Boolean(data?.requiresAccessCode),
+          hostedDemo: Boolean(data?.hostedDemo),
+        });
       })
       .catch(() => {
         if (active) setDemoAccounts([]);
@@ -97,11 +103,19 @@ export default function Login() {
   const enterDemo = async () => {
     if (!demoAccountId) return;
     try {
-      const result = await dispatch(demoLogin({ userId: demoAccountId })).unwrap();
+      const result = await dispatch(demoLogin({
+        userId: demoAccountId,
+        ...(demoMeta.requiresAccessCode ? { accessCode } : {}),
+      })).unwrap();
       setAuth({ user: result.user, facility: result.facility });
       navigate('/dashboard', { replace: true });
     } catch (err) {
-      toast.error(err?.error || 'Could not enter the local demo');
+      // Name which of the two things went wrong rather than one vague message.
+      if (err?.code === 'DEMO_CODE_REQUIRED') {
+        toast.error('That access code is not right. Ask whoever shared this link.');
+        return;
+      }
+      toast.error(err?.error || 'Could not enter the demo');
     }
   };
 
@@ -141,12 +155,38 @@ export default function Login() {
       {demoAccounts.length > 0 && (
         <section className="rounded-xl border border-[#2D5BFF]/20 bg-[#2D5BFF]/5 p-4 space-y-3">
           <div>
-            <p className="font-semibold text-sm text-slate-900">Local demo access</p>
-            <p className="text-xs text-slate-600 mt-1">
-              Choose a facility and role—no password required. Available only on this local launcher
-              {demoFacilities > 1 ? ` across ${demoFacilities} demo facilities.` : '.'}
+            <p className="font-semibold text-sm text-slate-900">
+              {demoMeta.hostedDemo ? 'Demonstration system' : 'Local demo access'}
             </p>
+            <p className="text-xs text-slate-600 mt-1">
+              Choose a facility and role — no password required
+              {demoFacilities > 1 ? `, across ${demoFacilities} demo facilities.` : '.'}
+            </p>
+            {/* On a hosted instance, say plainly that this is not a real system.
+                Someone arriving from a forwarded link has no other way to know,
+                and might otherwise enter a real patient's details. */}
+            {demoMeta.hostedDemo && (
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-2 mt-2">
+                This is a demonstration with invented patients. Please do not enter real patient
+                information — anyone else evaluating the system can see it.
+              </p>
+            )}
           </div>
+
+          {demoMeta.requiresAccessCode && (
+            <label className="grid gap-1.5 text-xs font-medium text-slate-700" htmlFor="demoAccessCode">
+              Access code
+              <input
+                id="demoAccessCode"
+                type="password"
+                value={accessCode}
+                onChange={(event) => setAccessCode(event.target.value)}
+                placeholder="Provided with your invitation"
+                autoComplete="off"
+                className="h-10 w-full min-w-0 rounded-md border border-input bg-white px-3 text-sm font-normal text-slate-900"
+              />
+            </label>
+          )}
           <label className="grid gap-1.5 text-xs font-medium text-slate-700" htmlFor="demoAccount">
             Demo facility and role
             <select

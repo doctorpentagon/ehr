@@ -38,11 +38,52 @@ function userResponse(user) {
   return { ...u, permissions: getPermissions(u.role, u.subRole) };
 }
 
+/**
+ * Passwordless demo sign-in, allowed in exactly two situations.
+ *
+ *   Local development  — LOCAL_DEMO_ACCESS, injected only by scripts/run-local.js
+ *   Hosted evaluation  — DEMO_MODE, a deliberate per-deployment decision that
+ *                        server.js refuses to start with unless acknowledged
+ *
+ * Both still issue a real token and preserve real permissions and facility
+ * scoping. This is a shortcut past the password, not past the rules — which is
+ * what makes it usable for evaluating whether the roles actually work.
+ */
+function demoAccessAllowed() {
+  const local = process.env.NODE_ENV !== 'production' && process.env.LOCAL_DEMO_ACCESS === 'true';
+  const hosted = process.env.DEMO_MODE === 'true'
+    && process.env.DEMO_MODE_ACKNOWLEDGED === 'i-understand-anyone-with-the-url-can-sign-in';
+  return local || hosted;
+}
+
 function localDemoOnly(req, res, next) {
-  if (process.env.NODE_ENV === 'production' || process.env.LOCAL_DEMO_ACCESS !== 'true') {
-    return res.status(404).json({ error: 'Not found' });
-  }
+  // 404 rather than 403: an instance without demo access should not advertise
+  // that the endpoint exists at all.
+  if (!demoAccessAllowed()) return res.status(404).json({ error: 'Not found' });
   next();
+}
+
+/**
+ * Optional shared code for a hosted demo.
+ *
+ * Set DEMO_ACCESS_CODE and evaluators must enter it once. It is not real
+ * authentication — everyone shares one code — but it stops a URL found in a
+ * search index or a forwarded email from being an open door, which costs
+ * nothing and removes the most likely way this gets misused.
+ */
+function demoCodeAccepted(req) {
+  const required = process.env.DEMO_ACCESS_CODE;
+  if (!required) return true;
+  const supplied = req.get('x-demo-access-code') || req.body?.accessCode || req.query?.accessCode;
+  return String(supplied || '') === String(required);
+}
+
+function requireDemoCode(req, res, next) {
+  if (demoCodeAccepted(req)) return next();
+  return res.status(401).json({
+    error: 'This demo needs an access code',
+    code: 'DEMO_CODE_REQUIRED',
+  });
 }
 
 function localDemoUserWhere(extra = {}) {
@@ -74,6 +115,8 @@ router.get('/local-demo-accounts', localDemoOnly, async (req, res, next) => {
 
     res.json({
       localOnly: true,
+      requiresAccessCode: Boolean(process.env.DEMO_ACCESS_CODE),
+      hostedDemo: process.env.DEMO_MODE === 'true',
       accounts: users.map((user) => ({
         id: user.id,
         name: `${user.firstName} ${user.lastName}`.trim(),
@@ -88,7 +131,7 @@ router.get('/local-demo-accounts', localDemoOnly, async (req, res, next) => {
 
 // Local-only passwordless entry. The production guard above and the launcher-
 // injected flag make this unavailable in every normal deployment.
-router.post('/local-demo-login', localDemoOnly, async (req, res, next) => {
+router.post('/local-demo-login', localDemoOnly, requireDemoCode, async (req, res, next) => {
   try {
     const { userId } = req.body || {};
     if (!userId || !isUuid(userId)) return res.status(400).json({ error: 'Choose a valid demo account' });
