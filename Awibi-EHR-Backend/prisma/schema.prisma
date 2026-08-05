@@ -1,0 +1,1694 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ── Enums ─────────────────────────────────────────────────────────────────────
+
+enum FacilityType {
+  HOSPITAL
+  CLINIC
+  LAB
+  PROFESSIONAL
+}
+
+enum FacilityPlan {
+  FREE
+  SMALL
+  CLINIC_PLUS
+  INSTITUTION
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  RECORDS
+  CLINICIAN
+}
+
+enum UserSubRole {
+  DOCTOR
+  NURSE
+  LAB
+  PHARMACIST
+}
+
+enum GenderType {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum PatientStatus {
+  IN_PATIENT
+  OUT_PATIENT
+  DISCHARGED
+  DEAD
+  DAMA
+}
+
+enum CaseStatus {
+  DRAFT
+  OPEN
+  SIGNED
+  CLOSED
+  REFERRED
+}
+
+// Ward round / Consultation / Procedure room come straight from the designs.
+enum EncounterType {
+  CONSULTATION
+  WARD_ROUND
+  PROCEDURE_ROOM
+  EMERGENCY
+  FOLLOW_UP
+  ANTENATAL
+  TELEMEDICINE
+}
+
+enum CaptureMethod {
+  NOTE_TAKER
+  VOICE
+  OCR
+  QUESTIONNAIRE
+}
+
+enum AllergySeverity {
+  MILD
+  MODERATE
+  SEVERE
+}
+
+enum ConditionStatus {
+  ACTIVE
+  RESOLVED
+  CHRONIC
+}
+
+enum PrescriptionStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum VisitType {
+  WALK_IN
+  EMERGENCY
+  REFERRAL
+  FOLLOW_UP
+  ROUTINE
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  UNPAID
+  PART_PAID
+  PAID
+}
+
+enum TestType {
+  LAB
+  IMAGING
+  ECG
+  OTHER
+}
+
+enum LabPriority {
+  ROUTINE
+  URGENT
+  STAT
+}
+
+// Full investigation lifecycle. PENDING/IN_PROGRESS/COMPLETED/CANCELLED are kept
+// so existing records and queries stay valid; the rest are additive.
+enum LabStatus {
+  PENDING
+  ACCEPTED
+  COLLECTED
+  IN_PROGRESS
+  PRELIMINARY
+  COMPLETED
+  CORRECTED
+  CANCELLED
+}
+
+enum BedType {
+  GENERAL
+  PRIVATE
+  ICU
+  HDU
+  MATERNITY
+}
+
+enum BedStatus {
+  AVAILABLE
+  OCCUPIED
+  /// Vacated but not yet cleaned. A bed that looks free on a board and is not
+  /// actually ready sends a patient to a bed that cannot take them, so the
+  /// in-between state has to be visible rather than assumed.
+  CLEANING
+  /// Out of service — broken frame, no oxygen point, being repaired.
+  MAINTENANCE
+}
+
+enum AdmissionStatus {
+  ADMITTED
+  DISCHARGED
+  TRANSFERRED
+  DAMA
+  DECEASED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  TRIAL
+}
+
+enum AffiliateType {
+  LAB
+  IMAGING
+  PHARMACY
+  SPECIALIST
+  HOSPITAL
+}
+
+enum ConsentScope {
+  FULL
+  READ_ONLY
+  LAB_ONLY
+  EMERGENCY
+}
+
+// ── Models ────────────────────────────────────────────────────────────────────
+
+model Facility {
+  id              String       @id @default(uuid()) @db.Uuid
+  name            String
+  type            FacilityType @default(CLINIC)
+  email           String?
+  phone           String?
+  address         String?
+  state           String?      @default("Kwara")
+  lga             String?
+  logo            String?
+
+  // ── Public profile ─────────────────────────────────────────────────────────
+  // The slug was previously derived from the facility name on every request.
+  // That breaks in two ordinary ways: two facilities with the same name resolve
+  // to the same URL, and renaming a facility silently invalidates every link it
+  // has already printed on a card or posted on social media. Stored instead.
+  slug            String?      @unique
+  tagline         String?
+  primaryColor    String?
+  receptionPhone  String?
+  whatsappNumber  String?
+  workingHours    Json?
+  enableTriageWidget Boolean   @default(true)
+
+  // ── Hospital number format ─────────────────────────────────────────────────
+  // The number staff quote to pull a chart. Every hospital has its own house
+  // style — LUTH-26-001234, UCH/001234, GHO-1000 — and a number that does not
+  // look like the one on the paper folder will not be trusted or used.
+  hospNoPrefix    String?      // e.g. "LUTH". Falls back to "PAT".
+  hospNoIncludeYear Boolean    @default(false)
+  hospNoPadding   Int          @default(3)
+  hospNoStart     Int          @default(1)
+  hospNoSeparator String       @default("-")
+
+  plan            FacilityPlan @default(FREE)
+  planExpiresAt   DateTime?
+  isActive        Boolean      @default(true)
+  profileComplete Boolean      @default(false)
+  licenseNumber   String?
+  nhisCode        String?
+  settings        Json         @default("{}")
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  users         User[]
+  patients      Patient[]
+  cases         Case[]
+  appointments  Appointment[]
+  departments   Department[]
+  beds          Bed[]
+  admissions    Admission[]
+  labRequests   LabRequest[]
+  invoices      Invoice[]
+  subscription  Subscription?
+  affiliates    Affiliate[]
+  consentGrants ConsentGrant[]
+  documents     PatientDocument[]
+  auditLogs     AuditLog[]
+  payments      Payment[]
+  inquiries     PatientInquiry[]
+  encounterTypes EncounterTypeConfig[]
+  clinicSchedules ClinicSchedule[]
+}
+
+model User {
+  id                  String       @id @default(uuid()) @db.Uuid
+  firstName           String
+  lastName            String
+  email               String?      @unique
+  passwordHash        String?
+  role                UserRole     @default(ADMIN)
+  subRole             UserSubRole?
+  staffId             String?      @unique
+  facilityId          String?      @db.Uuid
+  specialty           String?
+  phone               String?
+  avatar              String?
+  emailVerified       Boolean      @default(false)
+  googleId            String?
+  isActive            Boolean      @default(true)
+  lastLoginAt         DateTime?
+  otpCode             String?
+  otpExpiresAt        DateTime?
+  resetToken          String?
+  resetTokenExpiresAt DateTime?
+  refreshToken        String?
+  mustChangePassword  Boolean      @default(false)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  facility           Facility?         @relation(fields: [facilityId], references: [id])
+  authoredCases      Case[]            @relation("CaseAuthor")
+  doctorAppointments Appointment[]     @relation("AppointmentDoctor")
+  uploadedDocs       PatientDocument[]
+  labRequests        LabRequest[]      @relation("LabRequestedBy")
+  paymentsReceived   Payment[]         @relation("PaymentReceivedBy")
+  messagesSent       Message[]         @relation("MessageSender")
+  messagesReceived   Message[]         @relation("MessageRecipient")
+  clinicSessions     ClinicScheduleDoctor[] @relation("ClinicDoctor")
+}
+
+model Patient {
+  id                       String        @id @default(uuid()) @db.Uuid
+  facilityId               String        @db.Uuid
+  universalPatientId       String        @unique
+  mrn                      String?
+  firstName                String
+  lastName                 String
+  dateOfBirth              DateTime?     @db.Date
+  gender                   GenderType    @default(MALE)
+  maritalStatus            String?
+  religion                 String?
+  bloodType                String?
+  height                   Float?
+  weight                   Float?
+  phone                    String?
+  email                    String?
+  address                  String?
+  state                    String?
+  nin                      String?
+  hmo                      String?
+  emergencyContactName     String?
+  emergencyContactPhone    String?
+  emergencyContactRelation String?
+  status                   PatientStatus @default(OUT_PATIENT)
+  entryMode                String?       @default("WALK_IN")
+  avatar                   String?
+  notes                    String?
+  consentLinkedToIdentity  Boolean       @default(false)
+  isArchived              Boolean       @default(false)
+  archivedAt              DateTime?
+  archivedById            String?        @db.Uuid
+  createdAt                DateTime      @default(now())
+  updatedAt                DateTime      @updatedAt
+
+  facility      Facility          @relation(fields: [facilityId], references: [id])
+  cases         Case[]
+  vitals        Vitals[]
+  allergies     Allergy[]
+  conditions    Condition[]
+  prescriptions Prescription[]
+  appointments  Appointment[]
+  labRequests   LabRequest[]
+  invoices      Invoice[]
+  admissions    Admission[]
+  consentGrants ConsentGrant[]
+  documents     PatientDocument[]
+  currentBeds   Bed[]             @relation("BedCurrentPatient")
+
+  monitoringSheets    MonitoringSheet[]
+  drugAdministrations DrugAdministration[]
+  growthMeasurements  GrowthMeasurement[]
+  handoverNotes       HandoverNote[]
+
+  // Household membership. Null household means the patient is not linked.
+  householdId  String?                @db.Uuid
+  relationship HouseholdRelationship?
+  household    Household?             @relation("HouseholdMembers", fields: [householdId], references: [id])
+
+  insurances Insurance[]
+
+  // Emergency arrivals are recorded before identity is confirmed. A temporary
+  // record carries this flag until it is merged into, or promoted to, a real one.
+  isEmergencyTemp Boolean @default(false)
+  emergencyEncounters EmergencyEncounter[] @relation("EmergencyPatient")
+
+  nursingTasks NursingTask[] @relation("NursingTaskPatient")
+  orders       Order[]       @relation("OrderPatient")
+  resuscitations ResuscitationEvent[] @relation("ResuscitationPatient")
+  messages     Message[]     @relation("MessagePatient")
+
+  // Every patient query is facility-scoped first; without this the picker does a
+  // sequential scan of the whole table. The trigram indexes that make ILIKE
+  // "contains" search fast are added separately in
+  // prisma/sql/patient-search-indexes.sql (Prisma cannot express GIN/pg_trgm).
+  @@index([facilityId, isArchived])
+  @@index([facilityId, lastName, firstName])
+  @@index([facilityId, phone])
+  // An MRN is the number staff quote to pull a chart. Two patients sharing one
+  // is a safety incident, so the database refuses it rather than trusting the
+  // allocation code to be race-free.
+  @@unique([facilityId, mrn])
+}
+
+model Case {
+  id                    String        @id @default(uuid()) @db.Uuid
+  facilityId            String        @db.Uuid
+  patientId             String        @db.Uuid
+  authorId              String        @db.Uuid
+  title                 String?
+  chiefComplaint        String?
+  history               String?
+  examination           String?
+  assessment            String?
+  plan                  String?
+  notes                 String?
+  captureMethod         CaptureMethod @default(NOTE_TAKER)
+  audioUrl              String?
+  transcription         String?
+  scanUrl               String?
+  ocrText               String?
+  status                CaseStatus    @default(OPEN)
+  encounterType         EncounterType @default(CONSULTATION)
+  /// The facility's own encounter classification — Emergency, OPD Clinic, Ward
+  /// Round, or anything the administrator has added. Nullable so encounters
+  /// recorded before this existed stay honestly unclassified rather than being
+  /// given a category nobody chose; new encounters must select one.
+  encounterTypeId       String?       @db.Uuid
+  // Free-text "To do / Doctor's orders" panel from the case design.
+  doctorsOrders         String?
+  // A signed note is immutable. signedAt is the authority; status SIGNED mirrors it.
+  signedAt              DateTime?
+  signedById            String?       @db.Uuid
+  // Bumped on every save so two clinicians editing one draft cannot silently
+  // overwrite each other.
+  version               Int           @default(1)
+  referralNote          String?
+  icdCodes              Json          @default("[]")
+  aiSuggestions         Json          @default("{}")
+  reviewedByClinicianAt DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  facility Facility @relation(fields: [facilityId], references: [id])
+  patient  Patient  @relation(fields: [patientId], references: [id])
+  author   User     @relation("CaseAuthor", fields: [authorId], references: [id])
+  encounterTypeConfig EncounterTypeConfig? @relation("CaseEncounterType", fields: [encounterTypeId], references: [id])
+  vitals   Vitals[]
+}
+
+model Vitals {
+  id                     String   @id @default(uuid()) @db.Uuid
+  facilityId             String?  @db.Uuid
+  patientId              String   @db.Uuid
+  caseId                 String?  @db.Uuid
+  recordedById           String?  @db.Uuid
+  bloodPressureSystolic  Int?
+  bloodPressureDiastolic Int?
+  heartRate              Int?
+  respiratoryRate        Int?
+  temperature            Float?
+  oxygenSaturation       Float?
+  height                 Float?
+  weight                 Float?
+  bmi                    Float?
+  bloodGlucose           Float?
+  notes                  String?
+  recordedAt             DateTime @default(now())
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  patient Patient @relation(fields: [patientId], references: [id])
+  case    Case?   @relation(fields: [caseId], references: [id])
+}
+
+model Allergy {
+  id         String          @id @default(uuid()) @db.Uuid
+  facilityId String?         @db.Uuid
+  patientId  String          @db.Uuid
+  substance  String
+  reaction   String?
+  severity   AllergySeverity @default(MILD)
+  notes      String?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  patient Patient @relation(fields: [patientId], references: [id])
+}
+
+model Condition {
+  id         String          @id @default(uuid()) @db.Uuid
+  facilityId String?         @db.Uuid
+  patientId  String          @db.Uuid
+  name       String
+  icdCode    String?
+  onsetDate  DateTime?       @db.Date
+  status     ConditionStatus @default(ACTIVE)
+  notes      String?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  patient Patient @relation(fields: [patientId], references: [id])
+}
+
+model Prescription {
+  id             String             @id @default(uuid()) @db.Uuid
+  facilityId     String?            @db.Uuid
+  patientId      String             @db.Uuid
+  caseId         String?            @db.Uuid
+  prescribedById String?            @db.Uuid
+  drugName       String
+  dosage         String?
+  frequency      String?
+  duration       String?
+  route          String?            @default("ORAL")
+  instructions   String?
+  status         PrescriptionStatus @default(ACTIVE)
+  dispensedAt    DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  patient         Patient              @relation(fields: [patientId], references: [id])
+  administrations DrugAdministration[]
+}
+
+model Appointment {
+  id            String            @id @default(uuid()) @db.Uuid
+  facilityId    String            @db.Uuid
+  patientId     String            @db.Uuid
+  doctorId      String?           @db.Uuid
+  scheduledAt   DateTime
+  duration      Int               @default(30)
+  visitType     VisitType         @default(WALK_IN)
+  status        AppointmentStatus @default(SCHEDULED)
+  charges       Decimal           @default(0) @db.Decimal(12, 2)
+  paymentStatus PaymentStatus     @default(UNPAID)
+  paystackRef   String?
+  paidAmount    Decimal           @default(0) @db.Decimal(12, 2)
+  remarks       String?
+  caseId        String?           @db.Uuid
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  facility Facility  @relation(fields: [facilityId], references: [id])
+  patient  Patient   @relation(fields: [patientId], references: [id])
+  doctor   User?     @relation("AppointmentDoctor", fields: [doctorId], references: [id])
+  invoices Invoice[]
+}
+
+model LabRequest {
+  id              String      @id @default(uuid()) @db.Uuid
+  facilityId      String      @db.Uuid
+  patientId       String      @db.Uuid
+  caseId          String?     @db.Uuid
+  requestedById   String?     @db.Uuid
+  processedById   String?     @db.Uuid
+  testName        String
+  testType        TestType    @default(LAB)
+  priority        LabPriority @default(ROUTINE)
+  status          LabStatus   @default(PENDING)
+  result          String?
+  resultFileUrl   String?
+  aiDraft         String?
+  aiDraftReviewed Boolean     @default(false)
+  completedAt     DateTime?
+  notes           String?
+
+  // ── Structured result (numeric tests) ──────────────────────────────────────
+  catalogueTestId String?       @db.Uuid
+  resultValue     Float?
+  resultUnit      String?
+  referenceLow    Float?
+  referenceHigh   Float?
+  abnormalFlag    AbnormalFlag?
+  // A critical result is not "handled" until a named practitioner acknowledges it.
+  isCritical         Boolean   @default(false)
+  criticalAckById    String?   @db.Uuid
+  criticalAckAt      DateTime?
+
+  // ── Specimen tracking ──────────────────────────────────────────────────────
+  specimenId    String?
+  specimenType  String?
+  collectedAt   DateTime?
+  receivedAt    DateTime?
+
+  // ── Imaging / structured report ────────────────────────────────────────────
+  reportFindings   String?
+  reportImpression String?
+  // [{ url, name, mimeType, sizeBytes }]
+  attachments      Json      @default("[]")
+
+  // ── Verification and doctor review ─────────────────────────────────────────
+  verifiedById       String?   @db.Uuid
+  verifiedAt         DateTime?
+  reviewedByDoctorAt DateTime?
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  facility    Facility @relation(fields: [facilityId], references: [id])
+  patient     Patient  @relation(fields: [patientId], references: [id])
+  requestedBy User?    @relation("LabRequestedBy", fields: [requestedById], references: [id])
+}
+
+model Department {
+  id          String   @id @default(uuid()) @db.Uuid
+  facilityId  String   @db.Uuid
+  name        String
+  code        String?
+  headId      String?  @db.Uuid
+  description String?
+  isEmergency Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  facility Facility @relation(fields: [facilityId], references: [id])
+  beds     Bed[]
+  clinics  ClinicSchedule[]
+}
+
+model Bed {
+  id               String    @id @default(uuid()) @db.Uuid
+  facilityId       String    @db.Uuid
+  departmentId     String?   @db.Uuid
+  bedNumber        String
+  ward             String?
+  type             BedType   @default(GENERAL)
+  status           BedStatus @default(AVAILABLE)
+  currentPatientId String?   @db.Uuid
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  facility       Facility    @relation(fields: [facilityId], references: [id])
+  department     Department? @relation(fields: [departmentId], references: [id])
+  currentPatient Patient?    @relation("BedCurrentPatient", fields: [currentPatientId], references: [id])
+  admissions     Admission[]
+}
+
+model Admission {
+  id           String          @id @default(uuid()) @db.Uuid
+  facilityId   String          @db.Uuid
+  patientId    String          @db.Uuid
+  bedId        String?         @db.Uuid
+  admittedById String?         @db.Uuid
+  caseId       String?         @db.Uuid
+  admittedAt   DateTime        @default(now())
+  dischargedAt DateTime?
+  diagnosis    String?
+  notes        String?
+  status       AdmissionStatus @default(ADMITTED)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  facility Facility @relation(fields: [facilityId], references: [id])
+  patient  Patient  @relation(fields: [patientId], references: [id])
+  bed      Bed?     @relation(fields: [bedId], references: [id])
+}
+
+model Invoice {
+  id            String        @id @default(uuid()) @db.Uuid
+  facilityId    String        @db.Uuid
+  patientId     String        @db.Uuid
+  appointmentId String?       @db.Uuid
+  invoiceNumber String        @unique
+  items         Json          @default("[]")
+  subtotal      Decimal       @default(0) @db.Decimal(12, 2)
+  discount      Decimal       @default(0) @db.Decimal(12, 2)
+  total         Decimal       @default(0) @db.Decimal(12, 2)
+  amountPaid    Decimal       @default(0) @db.Decimal(12, 2)
+  balance       Decimal       @default(0) @db.Decimal(12, 2)
+  paymentStatus PaymentStatus @default(UNPAID)
+  paystackRef   String?
+  dueDate       DateTime?     @db.Date
+  paidAt        DateTime?
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  facility    Facility     @relation(fields: [facilityId], references: [id])
+  patient     Patient      @relation(fields: [patientId], references: [id])
+  appointment Appointment? @relation(fields: [appointmentId], references: [id])
+  payments    Payment[]
+}
+
+model Subscription {
+  id           String             @id @default(uuid()) @db.Uuid
+  facilityId   String             @unique @db.Uuid
+  plan         FacilityPlan       @default(FREE)
+  status       SubscriptionStatus @default(TRIAL)
+  patientLimit Int                @default(50)
+  staffLimit   Int                @default(5)
+  patientsUsed Int                @default(0)
+  staffUsed    Int                @default(0)
+  startDate    DateTime?          @db.Date
+  endDate      DateTime?          @db.Date
+  paystackRef  String?
+  amount       Decimal            @default(0) @db.Decimal(12, 2)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  facility Facility @relation(fields: [facilityId], references: [id])
+}
+
+model Affiliate {
+  id          String        @id @default(uuid()) @db.Uuid
+  facilityId  String        @db.Uuid
+  name        String
+  type        AffiliateType @default(LAB)
+  contactName String?
+  phone       String?
+  email       String?
+  address     String?
+  notes       String?
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  facility Facility @relation(fields: [facilityId], references: [id])
+}
+
+model PatientDocument {
+  id           String   @id @default(uuid()) @db.Uuid
+  facilityId   String   @db.Uuid
+  patientId    String?  @db.Uuid
+  uploadedById String?  @db.Uuid
+  originalName String?
+  filename     String?
+  url          String?
+  size         Int?
+  mimetype     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  facility   Facility @relation(fields: [facilityId], references: [id])
+  patient    Patient? @relation(fields: [patientId], references: [id])
+  uploadedBy User?    @relation(fields: [uploadedById], references: [id])
+}
+
+model ConsentGrant {
+  id         String       @id @default(uuid()) @db.Uuid
+  patientId  String       @db.Uuid
+  facilityId String       @db.Uuid
+  scope      ConsentScope @default(FULL)
+  grantedBy  String?      @db.Uuid
+  purpose    String?
+  grantedAt  DateTime     @default(now())
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  isActive   Boolean      @default(true)
+  ip         String?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  patient  Patient  @relation(fields: [patientId], references: [id])
+  facility Facility @relation(fields: [facilityId], references: [id])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  facilityId String?  @db.Uuid
+  userId     String?  @db.Uuid
+  action     String
+  resource   String?
+  resourceId String?  @db.Uuid
+  reason     String?
+  details    Json     @default("{}")
+  ip         String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  facility Facility? @relation(fields: [facilityId], references: [id])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NURSING / WARD DOCUMENTATION
+// Monitoring is template-driven: a sheet carries its own field definitions in
+// `fields`, so a facility can add a new monitoring type from Settings without a
+// schema migration. CUSTOM covers anything the built-in templates do not.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum MonitoringType {
+  URINARY_CATHETER
+  NGT_FEEDING
+  SURGICAL_DRAIN
+  IV_FLUID
+  BLOOD_TRANSFUSION
+  WOUND_CARE
+  NEURO_OBSERVATION
+  SEIZURE_WATCH
+  /// Blood glucose and insulin, charted together — the reading and the response
+  /// to it belong on one sheet or neither can be interpreted.
+  BGL_INSULIN
+  /// BP, pulse, respiratory rate, temperature and SpO2 trended over time. This
+  /// is distinct from the one-off vitals taken at triage: a saturation of 92%
+  /// means little alone and a great deal as the fourth reading of a fall.
+  VITALS
+  /// Fluid intake against output.
+  INTAKE_OUTPUT
+  CUSTOM
+}
+
+enum MonitoringStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+model MonitoringSheet {
+  id            String           @id @default(uuid()) @db.Uuid
+  facilityId    String           @db.Uuid
+  patientId     String           @db.Uuid
+  caseId        String?          @db.Uuid
+  admissionId   String?          @db.Uuid
+  createdById   String?          @db.Uuid
+  type          MonitoringType
+  customType    String?
+  title         String
+  // What this sheet monitors. Item definitions live here rather than in their own
+  // table because the engine is already driven by this shape and a parallel
+  // table would mean two sources of truth for the same thing.
+  //
+  // [{ key, label, unit, kind: 'number'|'text'|'select'|'boolean', options[],
+  //    required, category, frequency,
+  //    goalMin, goalMax,            // inside this band is normal
+  //    criticalLow, criticalHigh }] // outside this band needs a doctor now
+  fields        Json             @default("[]")
+  // Sheet-specific settings the templates need, e.g. { bagSizeMl: 1000 } for an
+  // IV bag so remaining volume can be derived rather than typed.
+  metadata      Json             @default("{}")
+  targetValue   Float?
+  targetUnit    String?
+  frequencyMins Int?
+  instructions  String?
+  /// The doctor's order this chart was opened against, when there was one.
+  /// A chart that exists because somebody ordered it should say so.
+  orderId       String?          @db.Uuid
+  status        MonitoringStatus @default(ACTIVE)
+  startedAt     DateTime         @default(now())
+  endedAt       DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  patient Patient           @relation(fields: [patientId], references: [id])
+  entries MonitoringEntry[]
+  reviews MonitoringReview[]
+
+  @@index([facilityId, patientId, status])
+}
+
+model MonitoringEntry {
+  id            String   @id @default(uuid()) @db.Uuid
+  sheetId       String   @db.Uuid
+  facilityId    String   @db.Uuid
+  recordedById  String?  @db.Uuid
+  recordedAt    DateTime @default(now())
+  // Values keyed by the parent sheet's field definitions.
+  values        Json     @default("{}")
+  // How far outside its goal band each numeric value sits, keyed the same way:
+  // { bgl: { deviation: 60, severity: 'CRITICAL_HIGH' } }. Computed on save so
+  // the chart, the colour coding and the alert all read one agreed number
+  // rather than each recomputing it and disagreeing at the boundary.
+  deviations    Json     @default("{}")
+  intakeMl      Float?
+  outputMl      Float?
+  attachmentUrl String?
+  isAbnormal    Boolean  @default(false)
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  sheet   MonitoringSheet    @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  reviews MonitoringReview[]
+
+  @@index([sheetId, recordedAt])
+}
+
+enum DrugRoute {
+  ORAL
+  IV
+  IM
+  SC
+  TOPICAL
+  RECTAL
+  INHALATION
+  SUBLINGUAL
+  OTHER
+}
+
+enum DrugAdminStatus {
+  GIVEN
+  MISSED
+  REFUSED
+  HELD
+}
+
+// Medication administration record. Normally generated from an active
+// Prescription so missed/late doses are detectable; `isUnscheduled` covers
+// emergency doses given before a prescriber writes them up.
+model DrugAdministration {
+  id               String          @id @default(uuid()) @db.Uuid
+  facilityId       String          @db.Uuid
+  patientId        String          @db.Uuid
+  prescriptionId   String?         @db.Uuid
+  caseId           String?         @db.Uuid
+  administeredById String?         @db.Uuid
+  drugName         String
+  dose             String?
+  route            DrugRoute       @default(ORAL)
+  scheduledAt      DateTime?
+  administeredAt   DateTime?
+  status           DrugAdminStatus @default(GIVEN)
+  balanceRemaining Float?
+  isUnscheduled    Boolean         @default(false)
+  reason           String?
+  notes            String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  patient      Patient       @relation(fields: [patientId], references: [id])
+  prescription Prescription? @relation(fields: [prescriptionId], references: [id])
+
+  @@index([facilityId, patientId, scheduledAt])
+}
+
+model GrowthMeasurement {
+  id                  String   @id @default(uuid()) @db.Uuid
+  facilityId          String   @db.Uuid
+  patientId           String   @db.Uuid
+  recordedById        String?  @db.Uuid
+  recordedAt          DateTime @default(now())
+  ageMonths           Int?
+  weightKg            Float?
+  heightCm            Float?
+  headCircumferenceCm Float?
+  muacCm              Float?
+  weightForAgeZ       Float?
+  heightForAgeZ       Float?
+  weightForHeightZ    Float?
+  notes               String?
+  createdAt           DateTime @default(now())
+
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([facilityId, patientId, recordedAt])
+}
+
+enum ShiftType {
+  MORNING
+  AFTERNOON
+  NIGHT
+}
+
+// Structured SBAR shift handover.
+model HandoverNote {
+  id               String    @id @default(uuid()) @db.Uuid
+  facilityId       String    @db.Uuid
+  patientId        String?   @db.Uuid
+  departmentId     String?   @db.Uuid
+  authorId         String?   @db.Uuid
+  shift            ShiftType
+  shiftDate        DateTime  @db.Date
+  situation        String?
+  background       String?
+  assessment       String?
+  recommendation   String?
+  outstandingTasks Json      @default("[]")
+  acknowledgedById String?   @db.Uuid
+  acknowledgedAt   DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  patient Patient? @relation(fields: [patientId], references: [id])
+
+  @@index([facilityId, shiftDate, shift])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DIAGNOSTICS CATALOGUE (laboratory + imaging)
+// One catalogue for both: every facility does lab and imaging, and a lab/imaging
+// centre serves patients directly. Reference ranges live here so result entry
+// can pre-fill units and auto-flag abnormal/critical values.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model DiagnosticTest {
+  id           String   @id @default(uuid()) @db.Uuid
+  facilityId   String   @db.Uuid
+  name         String
+  code         String?
+  testType     TestType @default(LAB)
+  category     String?
+  specimenType String?
+  unit         String?
+  referenceLow  Float?
+  referenceHigh Float?
+  criticalLow   Float?
+  criticalHigh  Float?
+  resultKind   String   @default("NUMERIC") // NUMERIC | TEXT | REPORT
+  price        Decimal  @default(0) @db.Decimal(12, 2)
+  turnaroundHours Int?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([facilityId, name])
+  @@index([facilityId, testType, isActive])
+}
+
+enum AbnormalFlag {
+  NORMAL
+  LOW
+  HIGH
+  CRITICAL_LOW
+  CRITICAL_HIGH
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HOUSEHOLD / FAMILY LINKING
+// A household groups patients who share a bill payer, address and often
+// insurance. The principal is the responsible adult; dependants inherit their
+// insurance unless overridden.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum HouseholdRelationship {
+  PRINCIPAL
+  SPOUSE
+  CHILD
+  DEPENDENT
+  OTHER
+}
+
+model Household {
+  id                 String   @id @default(uuid()) @db.Uuid
+  facilityId         String   @db.Uuid
+  name               String
+  principalPatientId String?  @db.Uuid
+  address            String?
+  phone              String?
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  members Patient[] @relation("HouseholdMembers")
+
+  @@index([facilityId, name])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INSURANCE
+// Coverage details are free-form JSON so each provider can carry its own fields
+// without a migration (e.g. "Outpatient 100%", "Lab 80%", "Copay 500").
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Insurance {
+  id                    String    @id @default(uuid()) @db.Uuid
+  facilityId            String    @db.Uuid
+  patientId             String    @db.Uuid
+  provider              String
+  planName              String?
+  policyNumber          String?
+  principalInsured      Boolean   @default(true)
+  // Set when a dependant is covered under the household principal's policy.
+  inheritedFromPatientId String?  @db.Uuid
+  validFrom             DateTime? @db.Date
+  validTo               DateTime? @db.Date
+  // { "Outpatient": "100%", "Lab": "80%", "Copay": 500, ... }
+  coverageDetails       Json      @default("{}")
+  authorizationRequired Boolean   @default(false)
+  isActive              Boolean   @default(true)
+  notes                 String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId, provider])
+  @@index([patientId, isActive])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EMERGENCY
+// A collapsing patient is treated before they are identified. These fields let
+// reception/nursing start a record immediately from a name alone, and reconcile
+// identity afterwards without losing any clinical data.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// South African Triage Scale colours, widely used across African EDs.
+enum TriageCategory {
+  RESUSCITATION
+  EMERGENCY
+  URGENT
+  SEMI_URGENT
+  NON_URGENT
+}
+
+enum EmergencyStatus {
+  ACTIVE
+  ADMITTED
+  DISCHARGED
+  TRANSFERRED
+  DECEASED
+  MERGED
+}
+
+model EmergencyEncounter {
+  id         String @id @default(uuid()) @db.Uuid
+  facilityId String @db.Uuid
+  // Always set: either a real patient or the temporary record created on arrival.
+  patientId  String @db.Uuid
+  caseId     String? @db.Uuid
+
+  presentingName  String
+  presentingPhone String?
+  approximateAge  Int?
+  arrivalMode     String?
+  triage          TriageCategory  @default(URGENT)
+  chiefComplaint  String?
+  // [{ key, label, checked }] — ticked boxes auto-populate the note.
+  redFlags        Json            @default("[]")
+  status          EmergencyStatus @default(ACTIVE)
+
+  openedById String?   @db.Uuid
+  closedAt   DateTime?
+  outcome    String?
+
+  // Identity reconciliation trail.
+  mergedIntoPatientId String?   @db.Uuid
+  mergedAt            DateTime?
+  mergedById          String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patient Patient @relation("EmergencyPatient", fields: [patientId], references: [id])
+
+  @@index([facilityId, status, triage])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ORDERS: medications, nursing tasks, and the drug catalogue
+// ─────────────────────────────────────────────────────────────────────────────
+
+model DrugCatalogue {
+  id           String   @id @default(uuid()) @db.Uuid
+  facilityId   String   @db.Uuid
+  name         String
+  genericName  String?
+  form         String?
+  strength     String?
+  defaultRoute DrugRoute @default(ORAL)
+  defaultDose  String?
+  defaultFrequency String?
+  category     String?
+  unitPrice    Decimal  @default(0) @db.Decimal(12, 2)
+  isControlled Boolean  @default(false)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([facilityId, name, strength])
+  @@index([facilityId, isActive])
+}
+
+enum NursingTaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum NursingTaskPriority {
+  ROUTINE
+  URGENT
+  STAT
+}
+
+// A doctor's actionable instruction to nursing staff — distinct from a
+// medication order, which is executed through the drug chart.
+model NursingTask {
+  id          String              @id @default(uuid()) @db.Uuid
+  facilityId  String              @db.Uuid
+  patientId   String              @db.Uuid
+  caseId      String?             @db.Uuid
+  orderedById String?             @db.Uuid
+  title       String
+  instructions String?
+  priority    NursingTaskPriority @default(ROUTINE)
+  status      NursingTaskStatus   @default(PENDING)
+  // Recurring tasks ("every 4 hours"); null means one-off.
+  frequencyHours Int?
+  dueAt       DateTime?
+  completedById String?           @db.Uuid
+  completedAt DateTime?
+  completionNote String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  patient Patient @relation("NursingTaskPatient", fields: [patientId], references: [id])
+
+  @@index([facilityId, status, priority])
+  @@index([patientId, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUBLIC BOOKING
+// Requests arrive from the unauthenticated clinic page and wait for staff
+// confirmation. Nothing here writes to the clinical record until confirmed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  RESCHEDULED
+  CANCELLED
+}
+
+enum TriageRouting {
+  GENERAL_OUTPATIENT
+  EMERGENCY
+  TELECONSULT
+}
+
+model BookingRequest {
+  id         String @id @default(uuid()) @db.Uuid
+  facilityId String @db.Uuid
+  reference  String @unique
+
+  // Returning patients resolve to an existing record; new ones do not.
+  patientId    String? @db.Uuid
+  isNewPatient Boolean @default(true)
+  fullName     String
+  phone        String
+  email        String?
+  dateOfBirth  DateTime? @db.Date
+
+  departmentId String?   @db.Uuid
+  doctorId     String?   @db.Uuid
+  requestedAt  DateTime
+  reason       String?
+
+  // Symptom checker output. Routing only — never a diagnosis.
+  symptomSummary  String?
+  symptomDuration String?
+  severity        Int?
+  redFlags        Json          @default("[]")
+  routing         TriageRouting?
+
+  status        BookingStatus @default(PENDING)
+  reviewedById  String?       @db.Uuid
+  reviewedAt    DateTime?
+  decisionNote  String?
+  appointmentId String?       @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([facilityId, status, requestedAt])
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  POS
+  HMO
+  WAIVER
+}
+
+/// One line in the cash book: a single sum handed over, by whom, to whom, when.
+///
+/// Invoice.amountPaid used to be the only record of money received, updated in
+/// place. That made a cash drawer impossible to reconcile — a balance of
+/// NGN 4,000 could be one payment or four, and nothing recorded which cashier
+/// took it. It also meant a mistaken entry could only be corrected by editing
+/// the total, which erases the evidence. Payments are therefore append-only:
+/// a mistake is reversed by a voided row that stays visible, never by deletion.
+model Payment {
+  id         String        @id @default(uuid()) @db.Uuid
+  facilityId String        @db.Uuid
+  invoiceId  String        @db.Uuid
+  amount     Decimal       @db.Decimal(12, 2)
+  method     PaymentMethod @default(CASH)
+  reference  String?
+  note       String?
+
+  /// Change handed back when the patient pays more than the balance. Recorded
+  /// separately so collections are never overstated by the change in the till.
+  changeGiven Decimal @default(0) @db.Decimal(12, 2)
+
+  receivedById String?   @db.Uuid
+  receivedAt   DateTime  @default(now())
+
+  isVoided   Boolean   @default(false)
+  voidReason String?
+  voidedById String?   @db.Uuid
+  voidedAt   DateTime?
+
+  createdAt DateTime @default(now())
+
+  facility   Facility @relation(fields: [facilityId], references: [id])
+  invoice    Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  receivedBy User?    @relation("PaymentReceivedBy", fields: [receivedById], references: [id])
+
+  @@index([facilityId, receivedAt])
+  @@index([invoiceId])
+}
+
+enum MessagePriority {
+  NORMAL
+  /// Needs an answer this shift.
+  URGENT
+}
+
+/// A message between staff in the same facility.
+///
+/// This is deliberately not a chat product. Ward communication that matters
+/// currently happens on personal WhatsApp, which means patient details sit on
+/// personal phones outside the record and outside the facility's control. A
+/// plain internal inbox that can reference a patient keeps that conversation
+/// inside the system, where it is scoped to the facility and auditable.
+///
+/// It is not a clinical order. Anything that must be acted on is an Order; this
+/// is for the things that are currently a corridor conversation.
+model Message {
+  id         String @id @default(uuid()) @db.Uuid
+  facilityId String @db.Uuid
+
+  senderId     String  @db.Uuid
+  recipientId  String  @db.Uuid
+  /// Threading is a self-reference: a reply points at what it answers.
+  parentId     String? @db.Uuid
+
+  subject  String?
+  body     String
+  priority MessagePriority @default(NORMAL)
+
+  /// Optional context. A message about a patient should be able to say so
+  /// without the sender pasting identifiers into free text.
+  patientId String? @db.Uuid
+
+  readAt     DateTime?
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  sender    User      @relation("MessageSender", fields: [senderId], references: [id])
+  recipient User      @relation("MessageRecipient", fields: [recipientId], references: [id])
+  patient   Patient?  @relation("MessagePatient", fields: [patientId], references: [id])
+  parent    Message?  @relation("MessageThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Message[] @relation("MessageThread")
+
+  @@index([facilityId, recipientId, readAt])
+  @@index([facilityId, senderId])
+  @@index([patientId])
+}
+
+/// What kind of contact an encounter was: emergency, clinic, ward round.
+///
+/// This is the classification everything downstream needs. Without it, a report
+/// cannot tell an emergency attendance from a routine clinic visit, and billing
+/// cannot price them differently — which is why selecting one is mandatory for
+/// new encounters even though historical records are left unclassified.
+model EncounterTypeConfig {
+  id          String  @id @default(uuid()) @db.Uuid
+  facilityId  String  @db.Uuid
+  name        String
+  description String?
+  /// Helpful when building a clinic timetable; not enforced on the encounter.
+  defaultDurationMins Int?
+  isActive    Boolean @default(true)
+  sortOrder   Int     @default(0)
+  /// Seeded types every facility gets. Protected from deletion so a report
+  /// written against "Emergency" cannot stop working because someone tidied up.
+  isSystem    Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  facility  Facility         @relation(fields: [facilityId], references: [id])
+  schedules ClinicSchedule[]
+  cases     Case[]           @relation("CaseEncounterType")
+
+  @@unique([facilityId, name])
+  @@index([facilityId, isActive, sortOrder])
+}
+
+/// A clinic that runs on a given day, staffed by named doctors.
+///
+/// Two jobs at once: it tells the ward which clinics are running today, and it
+/// is where bookable slots come from — so a patient can only be offered a time
+/// when somebody is actually there to see them.
+model ClinicSchedule {
+  id              String  @id @default(uuid()) @db.Uuid
+  facilityId      String  @db.Uuid
+  encounterTypeId String  @db.Uuid
+  departmentId    String? @db.Uuid
+
+  /// 0 = Sunday … 6 = Saturday, matching JavaScript's getDay().
+  dayOfWeek Int
+  /// Minutes from midnight. Stored as numbers so slot arithmetic needs no
+  /// parsing, and so a clinic is never accidentally compared as text.
+  startMinutes Int
+  endMinutes   Int
+
+  location    String?
+  maxPatients Int?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  facility      Facility            @relation(fields: [facilityId], references: [id])
+  encounterType EncounterTypeConfig @relation(fields: [encounterTypeId], references: [id], onDelete: Cascade)
+  department    Department?         @relation(fields: [departmentId], references: [id])
+  doctors       ClinicScheduleDoctor[]
+
+  @@index([facilityId, dayOfWeek, isActive])
+}
+
+model ClinicScheduleDoctor {
+  id         String @id @default(uuid()) @db.Uuid
+  scheduleId String @db.Uuid
+  userId     String @db.Uuid
+
+  schedule ClinicSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  doctor   User           @relation("ClinicDoctor", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduleId, userId])
+  @@index([userId])
+}
+
+enum InquirySource {
+  WEBSITE
+  WHATSAPP
+  PHONE
+  WALK_IN
+}
+
+enum InquiryStatus {
+  NEW
+  CONTACTED
+  BOOKED
+  CLOSED
+}
+
+/// Someone who reached out to a facility but is not yet a patient.
+///
+/// The public contact form previously only sent an email. If the mail failed —
+/// wrong SMTP password, a full mailbox, a provider outage — the enquiry was gone
+/// with nothing to show it ever arrived. Someone who described chest pain on a
+/// hospital's website and heard nothing back is a serious failure, so every
+/// enquiry is written down first and emailed second.
+model PatientInquiry {
+  id         String @id @default(uuid()) @db.Uuid
+  facilityId String @db.Uuid
+
+  source InquirySource @default(WEBSITE)
+  name   String?
+  phone  String?
+  email  String?
+
+  symptomsText        String?
+  suggestedDepartment String?
+  /// Set when the keyword routing thinks this needs an emergency department
+  /// rather than an appointment. Routing only — never a diagnosis.
+  isUrgent            Boolean @default(false)
+
+  status       InquiryStatus @default(NEW)
+  assignedToId String?       @db.Uuid
+  handledById  String?       @db.Uuid
+  handledAt    DateTime?
+  responseNote String?
+  /// Set once this enquiry becomes a real patient record.
+  patientId    String?       @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  facility Facility @relation(fields: [facilityId], references: [id])
+
+  @@index([facilityId, status, createdAt])
+}
+
+enum ResuscitationType {
+  CODE_BLUE
+  RAPID_RESPONSE
+  SEPSIS_ALERT
+  OTHER
+}
+
+enum ResuscitationOutcome {
+  /// Return of spontaneous circulation.
+  ROSC
+  DECEASED
+  TRANSFERRED_ICU
+  TRANSFERRED_THEATRE
+  STABILISED
+  OTHER
+}
+
+/// A resuscitation attempt, recorded as it happens.
+///
+/// The record of an arrest is the only account of what was done and when, and it
+/// is written by people whose hands are otherwise busy. Everything here is
+/// designed to be captured in one tap: the offset from the call is derived from
+/// the clock rather than typed, so the timeline stays accurate even when nobody
+/// has time to look at a watch.
+model ResuscitationEvent {
+  id          String  @id @default(uuid()) @db.Uuid
+  facilityId  String  @db.Uuid
+  /// May be the temporary record created for an unidentified arrival.
+  patientId   String  @db.Uuid
+  caseId      String? @db.Uuid
+  emergencyEncounterId String? @db.Uuid
+
+  type      ResuscitationType @default(CODE_BLUE)
+  startedAt DateTime          @default(now())
+  endedAt   DateTime?
+
+  /// Who was in the room. Free-form names as well as user IDs, because in a real
+  /// arrest the people who come running are not all logged in.
+  teamMembers Json @default("[]")
+  protocols   Json @default("[]")
+
+  outcome     ResuscitationOutcome?
+  outcomeNote String?
+
+  startedById String  @db.Uuid
+  endedById   String? @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patient Patient                  @relation("ResuscitationPatient", fields: [patientId], references: [id])
+  entries ResuscitationTimelineEntry[]
+
+  @@index([facilityId, startedAt])
+  @@index([patientId])
+}
+
+/// One action during a resuscitation, stamped against the call time.
+model ResuscitationTimelineEntry {
+  id      String @id @default(uuid()) @db.Uuid
+  eventId String @db.Uuid
+  facilityId String @db.Uuid
+
+  /// Seconds since the event began. Stored rather than derived so the timeline
+  /// survives any later correction to the start time.
+  timeOffsetSeconds Int
+  action  String
+  detail  String?
+  /// e.g. { drug: 'Adrenaline', dose: '1 mg', route: 'IV' } or { joules: 200 }
+  meta    Json    @default("{}")
+
+  performedById String   @db.Uuid
+  /// Actual wall clock, kept alongside the offset for the legal record.
+  recordedAt    DateTime @default(now())
+
+  event ResuscitationEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, timeOffsetSeconds])
+}
+
+enum OrderType {
+  MEDICATION
+  NURSING
+  DIET
+  ACTIVITY
+  TREATMENT
+  LAB
+  IMAGING
+}
+
+enum OrderStatus {
+  ACTIVE
+  COMPLETED
+  DISCONTINUED
+  /// Suspended without being cancelled — e.g. nil by mouth before theatre.
+  HELD
+}
+
+enum OrderExecutionOutcome {
+  DONE
+  /// Deliberately not done, with a reason. A skipped dose that is recorded is a
+  /// clinical fact; a skipped dose that is silently absent is a missing record.
+  SKIPPED
+  /// Attempted and could not be completed — patient refused, no access, no stock.
+  UNABLE
+}
+
+/// A standing instruction that someone has to carry out.
+///
+/// This exists alongside `NursingTask` rather than replacing it, because the two
+/// answer different questions. A task asks "what is due now"; an order asks "what
+/// was instructed, by whom, toward what goal, and has it been happening". The
+/// second question is the one a ward round and an audit both need, and a task
+/// could not answer it: it records a single completion, so a Q2H turn order over
+/// three days looked identical whether it was carried out twelve times or once.
+model Order {
+  id          String  @id @default(uuid()) @db.Uuid
+  facilityId  String  @db.Uuid
+  patientId   String  @db.Uuid
+  caseId      String? @db.Uuid
+  admissionId String? @db.Uuid
+
+  type      OrderType
+  /// What a nurse reads on the worklist: "Turn and reposition", "Metformin 500mg".
+  name      String
+  /// Shape varies by type — a drug carries dose/route/frequency, a nursing action
+  /// carries the action and how often. Kept flexible so a ward can express an
+  /// instruction we did not anticipate without a migration.
+  details   Json      @default("{}")
+  /// Why this was ordered. Written down because an instruction whose purpose is
+  /// unknown is the first thing to be skipped when the ward is busy.
+  goal      String?
+  instructions String?
+
+  /// Null for a one-off. Set for anything recurring, e.g. 2 for Q2H.
+  frequencyHours Float?
+  priority  NursingTaskPriority @default(ROUTINE)
+  status    OrderStatus         @default(ACTIVE)
+
+  orderedById   String    @db.Uuid
+  startAt       DateTime  @default(now())
+  stopAt        DateTime?
+  discontinuedById String?  @db.Uuid
+  discontinuedAt   DateTime?
+  discontinueReason String?
+
+  /// Set when a nurse opened a monitoring sheet from this order, so the chart
+  /// and the instruction that produced it stay connected in both directions.
+  monitoringSheetId String? @db.Uuid
+
+  /// What kind of chart this order expects a nurse to open, e.g. IV_FLUID for
+  /// "IV normal saline 1L over 8 hours". The doctor states what to monitor; the
+  /// nurse at the bedside supplies the specifics only they can know — the actual
+  /// catheter size, the bag they hung, the site they used.
+  monitoringType String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patient    Patient          @relation("OrderPatient", fields: [patientId], references: [id])
+  executions OrderExecution[]
+
+  @@index([facilityId, status, priority])
+  @@index([patientId, status])
+}
+
+/// One occasion on which an order was carried out — or deliberately was not.
+model OrderExecution {
+  id         String @id @default(uuid()) @db.Uuid
+  facilityId String @db.Uuid
+  orderId    String @db.Uuid
+
+  executedAt   DateTime              @default(now())
+  executedById String                @db.Uuid
+  outcome      OrderExecutionOutcome @default(DONE)
+  /// What was actually done or found: "Turned to left side, skin intact."
+  result       String?
+  /// Required when the outcome is not DONE.
+  reason       String?
+  comment      String?
+
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, executedAt])
+  @@index([facilityId, executedAt])
+}
+
+enum MonitoringReviewKind {
+  /// The doctor has read the chart and is satisfied.
+  ACKNOWLEDGED
+  /// A reading looks wrong; the nurse should recheck or correct it.
+  CORRECTION_REQUESTED
+  /// The plan should change — different frequency, different target range.
+  ADJUSTMENT_REQUESTED
+}
+
+/// A doctor's note on the nursing record.
+///
+/// Doctors do not author observations. An observation is a statement that a named
+/// person was at the bedside and saw something, and it has to stay clear who that
+/// was — in a dispute or an incident review, a blurred record is worse than no
+/// record. What a doctor needs instead is a way to say "this reading looks wrong,
+/// please recheck" or "make this hourly", and have the nurse see it on their
+/// worklist. That is this table. It sits beside the entry and never alters it.
+model MonitoringReview {
+  id         String  @id @default(uuid()) @db.Uuid
+  facilityId String  @db.Uuid
+  sheetId    String  @db.Uuid
+  /// Null when the review concerns the sheet as a whole rather than one reading.
+  entryId    String? @db.Uuid
+
+  kind    MonitoringReviewKind @default(ACKNOWLEDGED)
+  comment String
+
+  raisedById String   @db.Uuid
+  raisedAt   DateTime @default(now())
+
+  /// Cleared by the nurse once acted on, so it stops showing in the worklist.
+  resolvedById String?   @db.Uuid
+  resolvedAt   DateTime?
+  resolution   String?
+
+  createdAt DateTime @default(now())
+
+  sheet MonitoringSheet  @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  entry MonitoringEntry? @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([facilityId, resolvedAt])
+  @@index([sheetId])
+}

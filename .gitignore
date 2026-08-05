@@ -1,0 +1,68 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# This repository holds the EHR application only: backend and staff frontend.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Separate products with their own repositories.
+Awibi-EHR-Landing-main/
+Awibi-Identity-Backend/
+Awibi-Identity-Frontend/
+
+# Research and working material — contains credential files, a database backup
+# and 279 images including patient-facing screens. A private repository is not
+# a safe home for any of that.
+Ground Research Resource/
+research-audit/
+# Tooling that processes that research material belongs with it, not with the app.
+scripts/
+
+# Local working notes and audit write-ups.
+*.md
+!README.md
+!Awibi-EHR-Backend/**/*.md
+!Awibi-EHR-Frontend/**/*.md
+README.html
+*.ps1
+
+# Local tool settings.
+.claude/
+
+# Disabled nested repositories, kept on disk so their history is recoverable.
+**/.git.disabled-*/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Secrets — never commit
+# ─────────────────────────────────────────────────────────────────────────────
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Database exports
+*.sql
+*.dump
+*.backup
+*.backup.gz
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dependencies, build output, runtime
+# ─────────────────────────────────────────────────────────────────────────────
+**/node_modules/
+**/dist/
+**/build/
+**/.vite/
+**/coverage/
+**/.cache/
+**/generated/
+**/uploads/
+**/logs/
+*.log
+*.pid
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

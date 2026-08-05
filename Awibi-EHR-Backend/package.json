@@ -1,0 +1,54 @@
+{
+  "name": "awibi-ehr-backend",
+  "version": "2.0.0",
+  "description": "AwibiEHR backend — Node + Express + Prisma + PostgreSQL",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "dev:local": "node scripts/run-local.js node_modules/nodemon/bin/nodemon.js src/server.js",
+    "start": "node src/server.js",
+    "seed": "node src/seeds/demo.js",
+    "seed:local": "node scripts/run-local.js src/seeds/demo.js",
+    "seed:local:reset": "node scripts/run-local.js src/seeds/demo.js --reset",
+    "test:smoke": "node scripts/smoke-api.js",
+    "test:unit": "node --test test/unit.test.js",
+    "seed:reset": "node src/seeds/demo.js --reset",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:local:push": "node scripts/run-local.js node_modules/prisma/build/index.js db push",
+    "db:migrate": "prisma migrate deploy",
+    "db:studio": "prisma studio"
+  },
+  "prisma": {
+    "schema": "prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.10.0",
+    "bcryptjs": "^2.4.3",
+    "cloudinary": "^1.41.3",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "express-validator": "^7.0.1",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.9.7",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "passport-jwt": "^4.0.1",
+    "passport-local": "^1.0.0",
+    "pdfkit": "^0.19.1",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.0",
+    "uuid": "^9.0.1",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2",
+    "prisma": "^5.10.0"
+  }
+}

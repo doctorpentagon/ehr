@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AwibiEHR — Intelligent Healthcare</title>
+    <meta name="description" content="AwibiEHR: Smart, fast, affordable electronic health records for Nigerian healthcare facilities." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="root">
+      <!-- Shown until React mounts — prevents blank white flash -->
+      <div id="app-loader" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;z-index:9999;">
+        <svg width="40" height="40" viewBox="0 0 40 40" fill="none" style="margin-bottom:16px">
+          <circle cx="20" cy="20" r="18" stroke="#E8EEFF" stroke-width="4"/>
+          <path d="M20 2a18 18 0 0 1 18 18" stroke="#335CF4" stroke-width="4" stroke-linecap="round">
+            <animateTransform attributeName="transform" type="rotate" from="0 20 20" to="360 20 20" dur="0.8s" repeatCount="indefinite"/>
+          </path>
+        </svg>
+        <p style="font-family:system-ui,sans-serif;font-size:14px;color:#6B7280;margin:0">Loading Awibi EHR…</p>
+      </div>
+    </div>
+    <script>
+      // Remove the loader once React has mounted
+      document.addEventListener('DOMContentLoaded', function() {
+        const observer = new MutationObserver(function() {
+          const root = document.getElementById('root');
+          if (root && root.children.length > 1) {
+            const loader = document.getElementById('app-loader');
+            if (loader) loader.remove();
+            observer.disconnect();
+          }
+        });
+        observer.observe(document.getElementById('root'), { childList: true, subtree: true });
+      });
+    </script>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

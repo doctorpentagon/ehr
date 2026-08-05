@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.local
+*.db
+*.sqlite
+uploads/
+logs/
+.dev-server*.log
+.local-server*.log
+dist/
