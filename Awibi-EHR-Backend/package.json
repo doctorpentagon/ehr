@@ -20,7 +20,9 @@
     "db:studio": "prisma studio",
     "test:loops": "node scripts/audit-workflow-loops.js",
     "test:contract": "node scripts/check-api-contract.js",
-    "test:all": "npm run test:unit && npm run test:contract && npm run test:smoke && npm run test:loops"
+    "test:roles": "node scripts/verify-role-dashboards.js",
+    "test:tenancy": "node scripts/verify-tenancy.js",
+    "test:all": "npm run test:unit && npm run test:contract && npm run test:smoke && npm run test:loops && npm run test:roles && npm run test:tenancy"
   },
   "prisma": {
     "schema": "prisma/schema.prisma"

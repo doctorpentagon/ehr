@@ -6,7 +6,6 @@ dotenv.config({ path: path.resolve(__dirname, '../.env.local'), override: true }
 const db = new PrismaClient();
 
 const baseUrl = process.env.LOCAL_API_URL || 'http://localhost:8000/v1';
-const smokeClientIp = `2001:db8::${Date.now().toString(16)}`;
 const password = process.env.DEMO_PASSWORD;
 const accounts = {
   admin: process.env.DEMO_ADMIN_EMAIL,
@@ -48,7 +47,17 @@ async function request(pathname, { token, method = 'GET', body, form, clientIp }
   const response = await fetch(`${baseUrl}${pathname}`, {
     method,
     headers: {
-      'x-forwarded-for': clientIp || smokeClientIp,
+      // A fresh address per request by default.
+      //
+      // The whole suite used to share one address against a limit of 500
+      // requests per quarter hour. That was comfortable when the suite was
+      // small and became a trap as it grew: checks near the end started
+      // returning 429, which reads as a broken endpoint rather than an
+      // exhausted budget, and which check failed depended on how many had run
+      // before it. Nothing here asserts rate-limiting behaviour, so no check
+      // needs to share an address; the one that deliberately reuses an address
+      // passes it explicitly.
+      'x-forwarded-for': clientIp || freshClientIp(),
       ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
