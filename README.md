@@ -158,13 +158,50 @@ Or use `start-all.ps1` which opens all 5 in separate PowerShell windows.
 
 > **Security policy:** Credentials are printed to the backend terminal after `npm run seed`. They are NEVER shown in the login UI. Only the administrator should know them.
 
-| Role | Email | Password |
-|------|-------|----------|
-Demo account emails and passwords are supplied through private local environment variables. They are intentionally absent from source control, documentation, seed output, and the login UI.
+Demo account emails and passwords are supplied through private local environment
+variables. They are intentionally absent from source control, documentation,
+seed output, and the login UI.
 
-Use `Awibi-EHR-Backend/.env.local` for local credentials. Never commit or share that file.
+Use `Awibi-EHR-Backend/.env.local` for local credentials. Never commit or share
+that file.
 
 Facility: **UCH Ibadan Demo** · Plan: **SMALL** · 10 patients seeded
+
+A second facility, **Awibi Isolation Test Facility**, is seeded with one
+administrator and no clinical records. It exists so tenant isolation can be
+demonstrated rather than asserted: sign in there and none of UCH Ibadan's
+records are reachable, by listing or by direct id. `npm run test:tenancy`
+checks exactly that.
+
+### Passwordless entry, and the two gates that allow it
+
+Evaluators should not be handed a password, and a mock super-user with
+authorisation switched off would demonstrate nothing — the isolation and role
+separation are the point. Instead the login page can offer a picker of seeded
+accounts and sign in as one, issuing a **real token with RBAC and facility
+scoping fully active**. It is the ordinary login with the password step removed,
+not a bypass.
+
+Because that means anyone who reaches the page can sign in, it is behind two
+separate gates that cannot be enabled by accident:
+
+| | Variable | Value |
+|---|---|---|
+| **Local only** | `LOCAL_DEMO_ACCESS` | `true` — injected only by `scripts/run-local.js`. The server exits at startup if this is ever set with `NODE_ENV=production`. |
+| **Hosted evaluation** | `DEMO_MODE` | `true` |
+| | `DEMO_MODE_ACKNOWLEDGED` | `i-understand-anyone-with-the-url-can-sign-in` |
+
+The acknowledgement string is deliberately a sentence rather than a flag. Both
+must be present; setting `DEMO_MODE` alone does nothing.
+
+Optionally set **`DEMO_ACCESS_CODE`** to any value and evaluators must enter it
+once before the picker will sign them in. The API advertises this to the login
+page, which renders the field only when a code is actually required — so if you
+set it, **share it with your testers**, or the picker will list accounts and
+refuse every one of them.
+
+None of this weakens the real login, which continues to work unchanged
+alongside it.
 
 ---
 
@@ -421,6 +458,29 @@ POST /v1/identity/verify-nin
 | Identity Frontend + Landing | Vercel or Netlify | Same as above. |
 | Database | Supabase Pro ($25/mo) | Prevents auto-pause. |
 
+### What is actually deployed
+
+The evaluation environment currently runs:
+
+| | Host | Notes |
+|---|---|---|
+| Frontend | Vercel | Rebuilds on push to `master`. The build refuses to produce a bundle if `check:imports` or `check:routes` fails. |
+| Backend | Render (free tier) | Sleeps after 15 minutes idle; the first request afterwards takes 30–60 seconds. |
+| Database | Render PostgreSQL | Not Supabase. The Supabase projects above relate to local development only. |
+
+Two things follow from the free tier that are worth knowing before a demo:
+
+The login page treats a slow first response as *waking*, not as *broken*, and
+says so — a cold start otherwise looks exactly like an outage. If you are
+demonstrating to anyone, open the site once a minute beforehand so the instance
+is already awake.
+
+`VITE_API_URL` must be an absolute URL pointing at the backend host. A relative
+value such as `/v1` makes the browser call the *frontend's* origin, which
+returns the HTML page for every request; the frontend then fails to parse it as
+JSON and every screen silently shows nothing. The origin allowed by CORS is read
+from `ALLOWED_ORIGINS` (`CORS_ORIGIN` is also accepted).
+
 ---
 
 ## Awibi Scout
@@ -594,10 +654,20 @@ See **[NOT_BUILT.md](NOT_BUILT.md)** for the full checkable list. Summary:
 ## Testing
 
 ```bash
-npm run test:unit    # 32 checks — pure logic, no server needed
-npm run test:smoke   # 363 checks — every endpoint, every role, against a live API
-npm run test:loops   # 47 checks — each workflow from initiation to completion
-npm run test:all     # all three
+npm run test:unit      # 35 checks — pure logic, no server needed
+npm run test:contract  # every frontend API call against the routes the server serves
+npm run test:smoke     # 363 checks — every endpoint, every role, against a live API
+npm run test:loops     # 47 checks — each workflow from initiation to completion
+npm run test:roles     # every screen each role is offered, actually opened
+npm run test:tenancy   # one facility's records fetched with another's token
+npm run test:all       # all six
+```
+
+In the frontend, `npm run build` refuses to build if either wiring check fails:
+
+```bash
+npm run check:imports  # an identifier used but never imported
+npm run check:routes   # a nav entry pointing at a route that does not exist
 ```
 
 The loop audit is the one worth explaining. It does not test endpoints in
@@ -611,6 +681,30 @@ Two tests exist purely to catch drift rather than defects: the frontend keeps
 its own copy of the permission map to render the sidebar, and when the two
 disagree the UI either hides a screen the user may open or offers a button the
 API refuses. Both look like bugs and neither appears anywhere else.
+
+The two build-time checks exist because a whole class of defect here is
+invisible to the bundler. An unknown capitalised name is assumed to be a global
+it cannot see, so a missing import builds clean and throws only when the line
+runs — and when that line sits at module scope, as an icon table does, the
+module throws on import and the entire application renders nothing. That
+shipped once. A nav entry pointing at a route nobody declared is the same shape
+seen from the other side: page written, page imported, menu item present, and
+still a Not Found for whoever clicks it. Neither is caught by any test that
+exercises behaviour, because in both cases there is no behaviour to exercise.
+
+`test:tenancy` is the one that matters most, and it is written to be hard to
+pass by accident. Comparing two facilities' listings and finding no overlap
+proves nothing when one of them is empty, so it fetches one facility's records
+using the other facility's token, by exact id, and fails loudly if there was no
+data to probe with. A rate-limited response counts as inconclusive rather than
+as a refusal — from outside, a 429 and a genuine block look identical, and only
+one of them is access control.
+
+Every request in every suite carries its own client address. The suites used to
+share one, against a limit of 500 requests per quarter hour: comfortable while
+they were small, and a trap as they grew, because checks near the end began
+failing on a rate limit and which one failed depended on how many had run
+first. Three consecutive full runs now give identical results.
 
 ---
 
