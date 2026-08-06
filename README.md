@@ -423,6 +423,72 @@ POST /v1/identity/verify-nin
 
 ---
 
+## Awibi Scout
+
+A search box in the dashboard holding 158 clinical references and 14 working
+calculators. Open to every signed-in member of staff — it is published reference
+material, not patient data, and a nurse checking a drip rate needs it as much as
+a consultant checking a score.
+
+**It is a search box, not a menu.** With a thousand entries, choosing from a list
+is slower than remembering where the paper copy is. Categories exist for
+browsing when nothing is typed; typing is the way in.
+
+### The search ladder
+
+One algorithm cannot answer every kind of question, so six layers each answer a
+different kind of failure. A query stops at the first layer confident enough:
+
+| You type | Layer | You get |
+|---|---|---|
+| `how many drops` | concept bridge | IV Fluid Drip Rate |
+| `curb-65` | exact, BM25F over weighted fields | CURB-65 |
+| `tetan…` | prefix, while still typing | Tetanus |
+| `ketoacid` | character trigram | DKA — Diagnosis |
+| `diabetis` | edit distance | still finds it |
+| `shock` | facet | the category, never empty |
+
+British and American spellings are folded together, so `anaemia` and `anemia`
+reach the same entry. Queries average **0.15 ms** against an in-memory index —
+which is what allows results on every keystroke with no request, and what lets
+the whole thing keep working with no connection at all.
+
+The interface says *how* an answer was found. A partial or fuzzy match is
+labelled as one, because somebody is about to dose against it and a guess
+presented as a fact is worse than no answer.
+
+### Calculators
+
+Formulas are stored as expression trees and walked — never passed to `eval`.
+Content is data, and data that can execute is a way to run arbitrary code in a
+clinician's browser.
+
+Nothing is displayed unless every input is present and inside its allowed range.
+A missing height, a 900 kg weight, a zero denominator: each is refused with a
+plain reason. **A number on screen is taken as correct, so being absent beats
+being wrong.**
+
+Six entries whose formulas branch on sex or step through weight bands are shown
+as written formulas rather than as a Calculate button that could never produce
+an answer.
+
+### Built for a poor connection
+
+| | |
+|---|---|
+| Search index | **33 KB** on the wire, gzipped |
+| Entry body | ~5 KB, only when opened |
+| Second visit | **0 bytes** — HTTP 304 |
+| Offline | one tap saves all 158 entries (~1.7 MB) |
+
+Response compression is enabled service-wide, which is a four-fold saving on
+this payload and a large one on every list endpoint.
+
+Content updates without a code change: `scripts/build-scout-data.js` regenerates
+the served data from the source corpus.
+
+---
+
 ## Clinical modules
 
 The layer below turns the record from a filing system into something a ward runs on.
@@ -516,12 +582,35 @@ See **[NOT_BUILT.md](NOT_BUILT.md)** for the full checkable list. Summary:
 
 - Pharmacy module (no model, routes, or page)
 - Patient self-booking from Identity Portal
-- Playwright / Cypress end-to-end tests (coverage today is 307 API-level smoke checks + 19 unit)
+- Playwright / Cypress end-to-end tests — the browser layer is the one substantial untested surface
 - WHO growth reference tables — Z-scores return `null` rather than a wrong number
 - Per-facility timezone (process is pinned to `Africa/Lagos`; correct for Nigeria only)
 - Voice capture (placeholder only), AI triage beyond keyword mapping
 - Multilingual / i18n support (deliberate skip — no business requirement)
 - Mobile app (download page is a placeholder)
+
+---
+
+## Testing
+
+```bash
+npm run test:unit    # 32 checks — pure logic, no server needed
+npm run test:smoke   # 363 checks — every endpoint, every role, against a live API
+npm run test:loops   # 47 checks — each workflow from initiation to completion
+npm run test:all     # all three
+```
+
+The loop audit is the one worth explaining. It does not test endpoints in
+isolation; it walks each feature the way a person would — register a patient,
+open an encounter, sign it, order something, watch it reach the nurse's
+worklist, complete it, watch the count rise. A feature that can be started but
+not finished is a dead end, and one that finishes without notifying anyone
+downstream is a silent loss. Neither shows up in an endpoint test.
+
+Two tests exist purely to catch drift rather than defects: the frontend keeps
+its own copy of the permission map to render the sidebar, and when the two
+disagree the UI either hides a screen the user may open or offers a button the
+API refuses. Both look like bugs and neither appears anywhere else.
 
 ---
 

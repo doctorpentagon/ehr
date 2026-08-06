@@ -305,3 +305,81 @@ test('scout search stays inside the keystroke budget', () => {
   // The spec allows 60ms per keystroke; anything near that would feel laggy.
   assert.equal(average < 20, true, `average query took ${average}ms`);
 });
+
+/**
+ * The frontend keeps its own copy of the permission map to render the sidebar.
+ * When the two drift, the UI either hides a screen the user is allowed to open
+ * or offers a button the API refuses — both look like bugs to the user and
+ * neither shows up in any other test. This compares them directly.
+ */
+test('the frontend and backend permission maps agree', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+
+  const file = path.join(__dirname, '..', '..', 'Awibi-EHR-Frontend', 'src', 'lib', 'permissions.js');
+  const source = fs.readFileSync(file, 'utf8')
+    .replace(/^export\s+/gm, '')
+    .replace(/^import[^\n]*$/gm, '');
+  const context = { module: { exports: {} } };
+  vm.createContext(context);
+  vm.runInContext(`${source}\nmodule.exports = { can, PERMISSIONS, NAV_ITEMS };`, context);
+  const frontend = context.module.exports;
+
+  const roles = [
+    ['SUPER_ADMIN', null], ['ADMIN', null], ['RECORDS', null],
+    ['CLINICIAN', 'DOCTOR'], ['CLINICIAN', 'NURSE'], ['CLINICIAN', 'LAB'],
+  ];
+  // Every module the sidebar gates on, plus the write permissions that decide
+  // whether a screen shows an action button.
+  const modules = [...new Set([
+    ...frontend.NAV_ITEMS.map((i) => i.key).filter(Boolean),
+    'admissions', 'beds', 'monitoring_write', 'monitoring_review', 'clinical_write',
+    'prescriptions_write', 'drug_admin_write', 'emergency_write', 'handover_write',
+    'vitals_write', 'patient_demographics_write', 'growth_write',
+  ])];
+
+  // Some keys gate a page that never calls the API — Help & Support is static
+  // content. The backend has no opinion on those, so comparing them would only
+  // produce noise that trains people to ignore this test.
+  const frontendOnly = new Set(['support']);
+
+  const drift = [];
+  for (const [role, subRole] of roles) {
+    for (const module of modules) {
+      if (frontendOnly.has(module)) continue;
+      const back = can(role, subRole, module);
+      const front = frontend.can(role, subRole, module);
+      if (back !== front) drift.push(`${subRole || role}/${module}: backend ${back}, frontend ${front}`);
+    }
+  }
+  assert.deepEqual(drift, [], `permission maps disagree:\n  ${drift.join('\n  ')}`);
+});
+
+test('every sidebar item points at a module the backend knows', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+
+  const file = path.join(__dirname, '..', '..', 'Awibi-EHR-Frontend', 'src', 'lib', 'permissions.js');
+  const source = fs.readFileSync(file, 'utf8').replace(/^export\s+/gm, '').replace(/^import[^\n]*$/gm, '');
+  const context = { module: { exports: {} } };
+  vm.createContext(context);
+  vm.runInContext(`${source}\nmodule.exports = { NAV_ITEMS };`, context);
+
+  // A nav key nobody grants is a permanently locked menu item.
+  const frontendOnly = new Set(['support']);
+  // Spread into a host array. The nav list comes from a vm context, so arrays
+  // derived from it carry that realm's Array prototype — and deepStrictEqual
+  // compares prototypes, so two empty arrays from different realms are not
+  // equal. Comparing them directly fails with a blank diff that says nothing.
+  const orphans = [...context.module.exports.NAV_ITEMS
+    .filter((item) => item.key && !frontendOnly.has(item.key))
+    .filter((item) => ![
+      ['SUPER_ADMIN', null], ['ADMIN', null], ['RECORDS', null],
+      ['CLINICIAN', 'DOCTOR'], ['CLINICIAN', 'NURSE'], ['CLINICIAN', 'LAB'],
+    ].some(([r, s]) => can(r, s, item.key)))
+    .map((item) => `${item.label} (${item.key})`)];
+
+  assert.deepEqual(orphans, [], `sidebar items no role can reach: ${orphans.join(', ')}`);
+});

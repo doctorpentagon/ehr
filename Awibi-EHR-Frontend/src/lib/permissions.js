@@ -4,12 +4,12 @@ export const PERMISSIONS = {
   // ADMIN = facility owner: sees everything in their facility, but does not
   // author signed clinical content (no clinical_write/prescriptions_write).
   SUPER_ADMIN: { overview:1, patients:1, cases:1, appointments:1, lab:1, departments:1, staff:1, affiliates:1, billing:1, subscription:1, reports:1, settings:1, admissions:1, beds:1, orders:1, support:1, patient_demographics_write:1,
-                 nursing:1, monitoring:1, drug_admin:1, handover:1, growth:1, bookings:1, emergency:1, households:1,
+                 nursing:1, monitoring:1, drug_admin:1, handover:1, growth:1, bookings:1, emergency:1, emergency_write:1, households:1,
                  // Cross-facility platform oversight belongs to Awibi staff only.
                  platform:1 },
   ADMIN:       { overview:1, patients:1, cases:1, appointments:1, lab:1, departments:1, staff:1, affiliates:1, billing:1, subscription:1, reports:1, settings:1, admissions:1, beds:1, orders:1, support:1, patient_demographics_write:1,
-                 nursing:1, monitoring:1, drug_admin:1, handover:1, growth:1, bookings:1, emergency:1, households:1 },
-  RECORDS:     { overview:1, patients:1, appointments:1, settings:1, support:1, patient_demographics_write:1, bookings:1, emergency:1, households:1 },
+                 nursing:1, monitoring:1, drug_admin:1, handover:1, growth:1, bookings:1, emergency:1, emergency_write:1, households:1 },
+  RECORDS:     { overview:1, patients:1, appointments:1, settings:1, support:1, patient_demographics_write:1, bookings:1, emergency:1, emergency_write:1, households:1 },
   CLINICIAN:   { overview:1, settings:1, support:1 },
 };
 
@@ -18,8 +18,12 @@ const SUB_ROLE_EXTRAS = {
   // author observations — an observation says a named person was at the bedside.
   // `monitoring_review` replaces `monitoring_write` here; keep this matching the
   // backend or the UI offers buttons the API refuses.
+  // Admission and discharge are medical decisions. Doctors had no `admissions`
+  // permission, so a patient could be admitted and never discharged by the
+  // person who decides they are fit to leave — beds never came free.
   DOCTOR:     { patients:1, cases:1, appointments:1, lab:1, reports:1, prescriptions:1, orders:1, vitals_write:1, clinical_write:1, prescriptions_write:1,
-                nursing:1, monitoring:1, monitoring_review:1, drug_admin:1, handover:1, growth:1, growth_write:1, emergency:1, emergency_write:1, households:1 },
+                nursing:1, monitoring:1, monitoring_review:1, drug_admin:1, handover:1, growth:1, growth_write:1,
+                admissions:1, beds:1, emergency:1, emergency_write:1, households:1 },
   NURSE:      { patients:1, cases:1, appointments:1, lab:1, admissions:1, beds:1, orders:1, vitals:1, vitals_write:1,
                 nursing:1, monitoring:1, monitoring_write:1, drug_admin:1, drug_admin_write:1, handover:1, handover_write:1, growth:1, growth_write:1, emergency:1, emergency_write:1 },
   LAB:        { lab:1, transfer:1 },

@@ -45,8 +45,13 @@ const SUB_ROLE_EXTRAS = {
   // for a correction through `monitoring_review`, but they do not author the
   // observation itself — so it stays unambiguous who was at the bedside and saw
   // what. Owner decision, 4 August 2026.
+  // Admission and discharge are medical decisions. Doctors held no `admissions`
+  // permission at all, so a patient could be admitted by a nurse and then never
+  // discharged by the person who decides they are fit to go home — the ward
+  // filled up and the bed board stopped reflecting the ward.
   DOCTOR:  { patients: 1, cases: 1, appointments: 1, lab: 1, reports: 1, prescriptions: 1, orders: 1, vitals_write: 1, clinical_write: 1, prescriptions_write: 1,
              nursing: 1, monitoring: 1, monitoring_review: 1, drug_admin: 1, handover: 1, growth: 1, growth_write: 1,
+             admissions: 1, beds: 1,
              emergency: 1, emergency_write: 1, households: 1 },
   // Nursing is the nurse's own documentation domain: monitoring sheets, the
   // medication administration record, growth charts and shift handover.

@@ -17,7 +17,9 @@
     "db:push": "prisma db push",
     "db:local:push": "node scripts/run-local.js node_modules/prisma/build/index.js db push",
     "db:migrate": "prisma migrate deploy",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "test:loops": "node scripts/audit-workflow-loops.js",
+    "test:all": "npm run test:unit && npm run test:smoke && npm run test:loops"
   },
   "prisma": {
     "schema": "prisma/schema.prisma"

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchMe, clearAuth } from './store/authSlice';
@@ -98,10 +98,31 @@ function Spinner() {
 function PrivateRoute({ children }) {
   const { isAuthenticated, loading, user } = useSelector((s) => s.auth);
   const location = useLocation();
-  // Only block with spinner on cold load (no persisted session, token exists, fetchMe in-flight).
-  // When isAuthenticated is true (from persist), render the dashboard immediately — fetchMe
-  // re-validates silently in the background so the user never sees a spinner on page reload.
-  if (loading && !isAuthenticated) return <Spinner />;
+
+  /**
+   * Do not wait forever on a sleeping server.
+   *
+   * The session check blocks the whole app while it runs. On a host that idles
+   * its free instances that call can take the best part of a minute, and the
+   * visitor sits on a spinner with nothing to read and no way forward — which
+   * is indistinguishable from the application being broken.
+   *
+   * After a few seconds we stop blocking and send them to sign in. If the
+   * session turns out to be valid the check completes in the background and
+   * they land on the dashboard anyway; if it does not, they are already where
+   * they need to be.
+   */
+  const [waitedTooLong, setWaitedTooLong] = useState(false);
+  useEffect(() => {
+    if (!loading || isAuthenticated) return undefined;
+    const timer = setTimeout(() => setWaitedTooLong(true), 6000);
+    return () => clearTimeout(timer);
+  }, [loading, isAuthenticated]);
+
+  // Only block on a cold load: no persisted session, token present, check in
+  // flight. With a persisted session the dashboard renders at once and the
+  // check re-validates quietly behind it.
+  if (loading && !isAuthenticated && !waitedTooLong) return <Spinner />;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (user?.mustChangePassword && location.pathname !== '/dashboard/settings') {
     return <Navigate to="/dashboard/settings?passwordChange=required" replace />;
@@ -136,7 +157,10 @@ export default function App() {
         .catch((err) => {
           const msg = err?.error || '';
           if (msg.includes('timeout') || msg.includes('Network Error')) {
-            toast.error('Server unreachable — please check your Supabase project is active.', { duration: 8000 });
+            // Named the wrong service — it said Supabase long after the API
+            // moved. A message that points somewhere irrelevant wastes the time
+            // of whoever is trying to work out what is wrong.
+            toast.error('Cannot reach the server. It may be starting up — try again in a moment.', { duration: 8000 });
           }
         });
     } else {

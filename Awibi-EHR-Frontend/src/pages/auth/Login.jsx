@@ -41,11 +41,34 @@ export default function Login() {
   const [demoAccountId, setDemoAccountId] = useState('');
   const [demoMeta, setDemoMeta] = useState({ requiresAccessCode: false, hostedDemo: false });
   const [accessCode, setAccessCode] = useState('');
+  // loading → waking → ready | none | unreachable. Anything other than an
+  // instant answer needs to be visible, or the page just looks broken.
+  const [demoState, setDemoState] = useState('loading');
 
+  /**
+   * Fetch the demo accounts, allowing for a sleeping server.
+   *
+   * This used to give up after four seconds and silently render nothing. On a
+   * host that idles its free instances — which is most of them — the first
+   * visitor of the hour waits thirty to sixty seconds for the service to wake,
+   * so the request was guaranteed to fail and the picker simply vanished. No
+   * error, no explanation, and the page looked broken to the one person most
+   * likely to be evaluating it.
+   *
+   * Now it waits long enough to succeed, says what is happening while it does,
+   * and retries once rather than giving up on a single cold start.
+   */
   useEffect(() => {
     let active = true;
-    api.get('/auth/local-demo-accounts', { timeout: 4000 })
-      .then(({ data }) => {
+    let attempt = 0;
+
+    // Only claim the server is waking if the wait is long enough to notice.
+    const slowTimer = setTimeout(() => { if (active) setDemoState('waking'); }, 2500);
+
+    const fetchAccounts = async () => {
+      attempt += 1;
+      try {
+        const { data } = await api.get('/auth/local-demo-accounts', { timeout: 60000 });
         if (!active) return;
         const accounts = data?.accounts || [];
         setDemoAccounts(accounts);
@@ -54,11 +77,21 @@ export default function Login() {
           requiresAccessCode: Boolean(data?.requiresAccessCode),
           hostedDemo: Boolean(data?.hostedDemo),
         });
-      })
-      .catch(() => {
-        if (active) setDemoAccounts([]);
-      });
-    return () => { active = false; };
+        setDemoState(accounts.length ? 'ready' : 'none');
+      } catch (err) {
+        if (!active) return;
+        // A 404 is a definite answer: this deployment has no demo access.
+        // Anything else is worth one more try — a cold start often refuses the
+        // first connection outright rather than holding it open.
+        if (err?.response?.status === 404) { setDemoState('none'); return; }
+        if (attempt < 2) { setTimeout(fetchAccounts, 3000); return; }
+        setDemoAccounts([]);
+        setDemoState('unreachable');
+      }
+    };
+
+    fetchAccounts();
+    return () => { active = false; clearTimeout(slowTimer); };
   }, []);
 
   const demoFacilities = useMemo(() => {
@@ -150,6 +183,34 @@ export default function Login() {
         <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           Google sign-in failed. Please try again or use email/password.
         </div>
+      )}
+
+      {/* Free hosting tiers idle their instances, so the first visitor of the
+          hour waits for the service to wake. Saying so turns a page that looks
+          broken into one that is merely slow. */}
+      {demoState === 'waking' && (
+        <section className="rounded-xl border border-[#2D5BFF]/20 bg-[#2D5BFF]/5 p-4">
+          <div className="flex items-center gap-3">
+            <Loader2 className="animate-spin size-4 text-[#2D5BFF] shrink-0" />
+            <div>
+              <p className="font-semibold text-sm text-slate-900">Waking the demo server</p>
+              <p className="text-xs text-slate-600 mt-0.5">
+                It sleeps when unused and takes up to a minute to start. This only
+                happens on the first visit.
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {demoState === 'unreachable' && (
+        <section className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <p className="font-semibold text-sm text-amber-900">Could not reach the demo server</p>
+          <p className="text-xs text-amber-800 mt-0.5">
+            It may still be starting. Reload the page in a moment, or sign in with
+            an email and password below.
+          </p>
+        </section>
       )}
 
       {demoAccounts.length > 0 && (

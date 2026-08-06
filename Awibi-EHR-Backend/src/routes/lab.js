@@ -162,11 +162,40 @@ router.put('/catalogue/:id', [authenticate, tenant, requirePermission('settings'
   } catch (e) { next(e); }
 });
 
+/**
+ * Fields that must never be written through the generic update.
+ *
+ * This route previously copied the whole request body into the record. That
+ * allowed a numeric result to be stored with no reference range applied and no
+ * abnormal flag computed — a potassium of 7.2 saved as an ordinary result,
+ * raising no alert and appearing normal on the chart. It also allowed a
+ * critical-result acknowledgement to be written without anybody acknowledging
+ * anything, which is the audit trail that proves somebody was told.
+ *
+ * Results go through PUT /:id/result, which interprets them against the range.
+ */
+const RESULT_FIELDS = [
+  'resultValue', 'resultUnit', 'referenceLow', 'referenceHigh',
+  'abnormalFlag', 'isCritical', 'criticalAckById', 'criticalAckAt',
+  'verifiedById', 'verifiedAt', 'reviewedByDoctorAt',
+];
+
 router.put('/:id', auth, async (req, res, next) => {
   try {
     const exists = await prisma.labRequest.findFirst({ where: { id: req.params.id, facilityId: req.ctx.facilityId } });
     if (!exists) return res.status(404).json({ error: 'Not found' });
+
     const { id, facilityId, createdAt, updatedAt, ...data } = req.body;
+
+    const attempted = RESULT_FIELDS.filter((f) => f in data);
+    if (attempted.length) {
+      return res.status(400).json({
+        error: 'Results must be entered through the result endpoint so they are checked against the reference range',
+        fields: attempted,
+        use: `PUT /lab/${req.params.id}/result`,
+      });
+    }
+
     if (data.status === 'COMPLETED' && !exists.completedAt) data.completedAt = new Date();
     const r = await prisma.labRequest.update({ where: { id: req.params.id }, data });
     res.json(r);
