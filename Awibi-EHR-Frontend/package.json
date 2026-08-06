@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "check:imports": "node scripts/check-imports.js src",
-    "build": "npm run check:imports && vite build",
+    "check:routes": "node scripts/check-routes.js src",
+    "check": "npm run check:imports && npm run check:routes",
+    "build": "npm run check && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

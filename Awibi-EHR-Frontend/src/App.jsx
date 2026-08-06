@@ -227,6 +227,10 @@ export default function App() {
         <Route path="reports" element={<RoleRoute module="reports"><Reports /></RoleRoute>} />
         <Route path="subscription" element={<RoleRoute module="subscription"><Subscription /></RoleRoute>} />
         <Route path="settings" element={<RoleRoute module="settings"><Settings /></RoleRoute>} />
+        {/* Guarded by `departments`, matching the sidebar entry that links here —
+            using `settings` instead would open the clinic timetable to every role
+            that can reach the settings screen. */}
+        <Route path="settings/encounter-types" element={<RoleRoute module="departments"><EncounterTypes /></RoleRoute>} />
         <Route path="support" element={<RoleRoute module="support"><Support /></RoleRoute>} />
         <Route path="affiliates" element={<RoleRoute module="affiliates"><Affiliates /></RoleRoute>} />
       </Route>

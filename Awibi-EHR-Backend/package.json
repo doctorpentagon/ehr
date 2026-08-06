@@ -19,7 +19,8 @@
     "db:migrate": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "test:loops": "node scripts/audit-workflow-loops.js",
-    "test:all": "npm run test:unit && npm run test:smoke && npm run test:loops"
+    "test:contract": "node scripts/check-api-contract.js",
+    "test:all": "npm run test:unit && npm run test:contract && npm run test:smoke && npm run test:loops"
   },
   "prisma": {
     "schema": "prisma/schema.prisma"
