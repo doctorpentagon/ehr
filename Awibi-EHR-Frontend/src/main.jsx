@@ -46,15 +46,37 @@ if ('serviceWorker' in navigator) {
       // Ask immediately rather than waiting for the browser's own schedule.
       registration.update().catch(() => {});
 
+      // Only reload when an EXISTING worker is being replaced.
+      //
+      // On a first visit there is no controller until the new worker calls
+      // clients.claim(), which fires this event too. Reloading then starts the
+      // whole sequence again on the next load — an endless reload that looks
+      // exactly like a page which never finishes loading.
+      const hadController = Boolean(navigator.serviceWorker.controller);
       let reloading = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        // Guard against a reload loop if control changes more than once.
-        if (reloading) return;
+        if (!hadController || reloading) return;
         reloading = true;
         window.location.reload();
       });
     } catch { /* no service worker: the app works, just without offline */ }
   });
+}
+
+/**
+ * Dismiss the pre-React loading shell.
+ *
+ * index.html paints a full-screen spinner so the first frame is not blank. It
+ * sits at z-index 9999 over everything, so if it is not removed the application
+ * renders perfectly underneath and the user still sees only a spinner.
+ *
+ * It was removed by a MutationObserver that waited for #root to hold more than
+ * one child — a guess about how React attaches, which is true in some versions
+ * and not others. Calling this directly after render is not a guess.
+ */
+function dismissLoadingShell() {
+  const loader = document.getElementById('app-loader');
+  if (loader) loader.remove();
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(
@@ -69,5 +91,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         </QueryClientProvider>
       </PersistGate>
     </Provider>
-  </React.StrictMode>
+  </React.StrictMode>,
 );
+
+// After the first paint, not before — otherwise there is a blank frame between
+// removing the shell and React drawing.
+requestAnimationFrame(dismissLoadingShell);

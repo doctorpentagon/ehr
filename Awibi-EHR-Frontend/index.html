@@ -24,18 +24,31 @@
       </div>
     </div>
     <script>
-      // Remove the loader once React has mounted
-      document.addEventListener('DOMContentLoaded', function() {
-        const observer = new MutationObserver(function() {
-          const root = document.getElementById('root');
-          if (root && root.children.length > 1) {
-            const loader = document.getElementById('app-loader');
-            if (loader) loader.remove();
-            observer.disconnect();
-          }
-        });
-        observer.observe(document.getElementById('root'), { childList: true, subtree: true });
-      });
+      // The application removes this itself once React has rendered.
+      //
+      // This is only a failsafe. The loader covers the whole viewport, so if it
+      // is ever left in place the app renders underneath and the user sees a
+      // spinner forever with no way to tell whether anything is wrong. Ten
+      // seconds is far longer than a normal start and short enough that nobody
+      // concludes the product is broken.
+      setTimeout(function () {
+        var loader = document.getElementById('app-loader');
+        if (!loader) return;
+        loader.remove();
+        // If React had mounted it would have removed this already, so say what
+        // happened rather than leaving a blank page behind.
+        var root = document.getElementById('root');
+        if (root && root.childElementCount === 0) {
+          root.innerHTML =
+            '<div style="font-family:system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1.5rem;color:#111">'
+            + '<h1 style="font-size:1.25rem;margin:0 0 .5rem">Awibi EHR did not start</h1>'
+            + '<p style="color:#4B5563;font-size:.9rem;line-height:1.5;margin:0 0 1rem">'
+            + 'The page loaded but the application did not. Open the browser console for the error, '
+            + 'or reload to try again.</p>'
+            + '<button onclick="location.reload()" style="padding:.6rem 1.1rem;border:0;border-radius:.5rem;'
+            + 'background:#335CF4;color:#fff;font-size:.875rem;cursor:pointer">Reload</button></div>';
+        }
+      }, 10000);
     </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
