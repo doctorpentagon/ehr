@@ -28,9 +28,32 @@ function PersistSpinner() {
   );
 }
 
+/**
+ * Register the service worker, and make sure a broken one can be replaced.
+ *
+ * An earlier version cached the HTML document indefinitely. Because that
+ * document names every other file by content hash, a stale copy asks for
+ * bundles that no longer exist and the application never starts — and it
+ * cannot recover, because the fix is inside the bundle it will not load.
+ *
+ * Checking for an update on every load, and reloading once when a new worker
+ * takes control, is what breaks that cycle for anyone already caught in it.
+ */
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  window.addEventListener('load', async () => {
+    try {
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      // Ask immediately rather than waiting for the browser's own schedule.
+      registration.update().catch(() => {});
+
+      let reloading = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        // Guard against a reload loop if control changes more than once.
+        if (reloading) return;
+        reloading = true;
+        window.location.reload();
+      });
+    } catch { /* no service worker: the app works, just without offline */ }
   });
 }
 
