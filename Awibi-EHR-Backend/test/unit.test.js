@@ -383,3 +383,78 @@ test('every sidebar item points at a module the backend knows', () => {
 
   assert.deepEqual(orphans, [], `sidebar items no role can reach: ${orphans.join(', ')}`);
 });
+
+/**
+ * Catch an identifier that is used but never imported.
+ *
+ * A missing import is not a build error — the bundler treats the name as a
+ * global it cannot see, and the failure only appears when the line runs. When
+ * that line is at module scope, as an icon lookup table is, the module throws
+ * on import, React renders nothing, and the whole application shows a blank
+ * page with no clue why. That is exactly what happened: the sidebar's icon map
+ * gained five entries whose imports never landed, the build passed, every API
+ * test passed, and the product would not start.
+ */
+test('the sidebar imports every icon it references', () => {
+  const fs = require('fs');
+  const path = require('path');
+
+  const file = path.join(__dirname, '..', '..', 'Awibi-EHR-Frontend', 'src', 'components', 'layout', 'Sidebar.jsx');
+  const source = fs.readFileSync(file, 'utf8');
+
+  const importBlock = (source.match(/import \{([^}]*)\} from '@tabler\/icons-react';/) || [])[1] || '';
+  const imported = new Set(importBlock.split(',').map((s) => s.trim()).filter(Boolean));
+
+  // Every value in the icon map, e.g. `Compass: IconCompass`.
+  const referenced = [...source.matchAll(/^\s+[A-Za-z0-9]+:\s+(Icon[A-Za-z0-9]+),/gm)].map((m) => m[1]);
+
+  const missing = [...new Set(referenced)].filter((name) => !imported.has(name));
+  assert.deepEqual(missing, [], `used but never imported: ${missing.join(', ')}`);
+});
+
+test('every icon the sidebar imports exists in the icon package', () => {
+  const fs = require('fs');
+  const path = require('path');
+
+  const file = path.join(__dirname, '..', '..', 'Awibi-EHR-Frontend', 'src', 'components', 'layout', 'Sidebar.jsx');
+  const source = fs.readFileSync(file, 'utf8');
+  const importBlock = (source.match(/import \{([^}]*)\} from '@tabler\/icons-react';/) || [])[1] || '';
+  const imported = [...new Set(importBlock.split(',').map((s) => s.trim()).filter(Boolean))];
+
+  let icons;
+  try {
+    // eslint-disable-next-line import/no-unresolved, global-require
+    icons = require(path.join(__dirname, '..', '..', 'Awibi-EHR-Frontend', 'node_modules', '@tabler', 'icons-react'));
+  } catch {
+    return; // Frontend dependencies not installed; nothing to verify against.
+  }
+
+  // Importing a name the package does not export yields undefined at runtime,
+  // which renders nothing and looks like a styling problem rather than a typo.
+  const absent = imported.filter((name) => !icons[name]);
+  assert.deepEqual(absent, [], `imported but not exported by @tabler/icons-react: ${absent.join(', ')}`);
+});
+
+test('every sidebar nav item resolves to a real icon', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+
+  const dir = path.join(__dirname, '..', '..', 'Awibi-EHR-Frontend', 'src');
+  const permissions = fs.readFileSync(path.join(dir, 'lib', 'permissions.js'), 'utf8')
+    .replace(/^export\s+/gm, '').replace(/^import[^\n]*$/gm, '');
+  const context = { module: { exports: {} } };
+  vm.createContext(context);
+  vm.runInContext(`${permissions}\nmodule.exports = { NAV_ITEMS };`, context);
+
+  const sidebar = fs.readFileSync(path.join(dir, 'components', 'layout', 'Sidebar.jsx'), 'utf8');
+  const mapped = new Set([...sidebar.matchAll(/^\s+([A-Za-z0-9]+):\s+Icon[A-Za-z0-9]+,/gm)].map((m) => m[1]));
+
+  // An unmapped name silently falls back to a house icon, so several unrelated
+  // screens end up looking identical in the sidebar and nobody notices.
+  const unmapped = [...context.module.exports.NAV_ITEMS
+    .map((item) => item.icon)
+    .filter((icon) => icon && !mapped.has(icon))];
+
+  assert.deepEqual([...new Set(unmapped)], [], `nav icons with no mapping: ${unmapped.join(', ')}`);
+});

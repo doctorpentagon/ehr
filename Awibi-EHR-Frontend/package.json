@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "check:imports": "node scripts/check-imports.js src",
+    "build": "npm run check:imports && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -9,6 +9,7 @@ import {
   IconBuildingSkyscraper, IconLock, IconLayoutDashboard,
   IconActivityHeartbeat, IconPill, IconClipboardList,
   IconAlertTriangle, IconCalendarCheck, IconListCheck, IconUsersGroup, IconShieldCheck,
+  IconCompass, IconMessageCircle, IconMessage, IconClipboardCheck, IconHash,
 } from '@tabler/icons-react';
 import { logout } from '@/store/authSlice';
 import { cn } from '@/lib/utils';
