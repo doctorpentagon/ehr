@@ -38,6 +38,13 @@ const ICON_MAP = {
   ListChecks:         IconListCheck,
   Users2:             IconUsersGroup,
   ShieldCheck:        IconShieldCheck,
+  // Anything missing here silently renders a house icon, which is how four
+  // screens added this week all ended up looking identical in the sidebar.
+  Compass:            IconCompass,
+  MessageCircle:      IconMessageCircle,
+  MessageSquare:      IconMessage,
+  ClipboardCheck:     IconClipboardCheck,
+  Hash:               IconHash,
 };
 
 const SECTIONS = ['General', 'Clinical', 'Nursing', 'Admin', 'Platform', 'System'];

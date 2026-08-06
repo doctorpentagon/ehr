@@ -45,7 +45,9 @@ async function request(pathname, { token, method = 'GET', body, form } = {}) {
       ? await response.json()
       : Buffer.from(await response.arrayBuffer());
   } catch { /* unreadable response */ }
-  return { status: response.status, data };
+  // Headers matter for caching and content negotiation, which are as much a
+  // part of the contract as the body.
+  return { status: response.status, data, headers: response.headers };
 }
 
 async function login(role) {
@@ -1873,6 +1875,59 @@ async function run() {
     await db.clinicScheduleDoctor.deleteMany({ where: { scheduleId: schedule.data.id } });
     await db.clinicSchedule.delete({ where: { id: schedule.data.id } }).catch(() => {});
     await db.encounterTypeConfig.delete({ where: { id: custom.data.id } }).catch(() => {});
+  }
+
+  // ── Awibi Scout: reference and calculators ───────────────────────────────
+  {
+    // Published reference material, not patient data. Every clinical role needs
+    // it — a nurse checking a drip rate as much as a consultant checking a score.
+    for (const [label, token] of [
+      ['nurse', tokens.nurse], ['doctor', tokens.doctor], ['diagnostics', tokens.lab],
+      ['records', tokens.records], ['admin', tokens.admin],
+    ]) {
+      assert(`${label} can open the reference library`,
+        (await request('/scout/index', { token })).status === 200);
+    }
+    await expectStatus('the reference library rejects anonymous access', '/scout/index', null, 401);
+
+    const manifest = await request('/scout/manifest', { token: tokens.nurse });
+    assert('the manifest reports a content release',
+      Boolean(manifest.data?.release) && manifest.data?.entryCount > 0,
+      `${manifest.data?.release} · ${manifest.data?.entryCount} entries`);
+
+    const index = await request('/scout/index', { token: tokens.nurse });
+    assert('the search index carries every entry',
+      index.data?.entries?.length === manifest.data.entryCount,
+      `${index.data?.entries?.length}`);
+    assert('the index carries the plain-language bridges',
+      Object.keys(index.data?.bridges || {}).length > 0);
+    // Cached hard, because re-downloading it on every visit would cost a nurse
+    // 33 KB of their own data each time.
+    assert('the index is cached immutably',
+      /immutable/.test(index.headers?.get('cache-control') || ''),
+      index.headers?.get('cache-control'));
+    // A second visit should cost nothing at all.
+    const etag = index.headers?.get('etag');
+    const repeat = await fetch(`${baseUrl}/scout/index`, {
+      headers: { authorization: `Bearer ${tokens.nurse}`, 'if-none-match': etag },
+    });
+    assert('a repeat visit re-downloads nothing', repeat.status === 304, `HTTP ${repeat.status}`);
+
+    const entry = await request('/scout/entry/body_mass_index_bmi', { token: tokens.nurse });
+    assert('an entry loads on demand', entry.status === 200 && Boolean(entry.data?.logic));
+    assert('an unknown entry is a clean 404',
+      (await request('/scout/entry/not-a-real-entry', { token: tokens.nurse })).status === 404);
+
+    const bulk = await request('/scout/entries', {
+      token: tokens.nurse, method: 'POST',
+      body: { slugs: ['body_mass_index_bmi', 'tetanus_principles_of_management'] },
+    });
+    assert('several entries can be fetched at once for offline use',
+      Object.keys(bulk.data?.entries || {}).length === 2);
+    assert('an unbounded bulk request is refused',
+      (await request('/scout/entries', {
+        token: tokens.nurse, method: 'POST', body: { slugs: Array(300).fill('x') },
+      })).status === 400);
   }
 
   console.log(`\nSmoke result: ${passed} passed, ${failed} failed`);

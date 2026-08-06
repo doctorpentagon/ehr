@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
@@ -15,6 +16,21 @@ const app = express();
 app.set('trust proxy', 1);
 
 // ── Security ────────────────────────────────────────────────────────────────
+/**
+ * Compress every response.
+ *
+ * This matters more than it looks on a Nigerian mobile connection. The Scout
+ * reference index is 125 KB of JSON that compresses to 33 KB — a four-fold
+ * difference in how long a nurse waits before they can type. Ordinary list
+ * endpoints benefit almost as much, since JSON is highly repetitive.
+ *
+ * Declared before the routes so it wraps all of them.
+ */
+app.use(compression({
+  // Below about a kilobyte the compression overhead costs more than it saves.
+  threshold: 1024,
+}));
+
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
 /**

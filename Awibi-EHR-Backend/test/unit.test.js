@@ -7,6 +7,9 @@ const { normalizeVitals } = require('../src/utils/vitals');
 const { generateTemporaryPassword, isStrongPassword } = require('../src/utils/passwords');
 const { normalisePhone, validateDateOfBirth, ageInYears } = require('../src/utils/patientValidation');
 const { deviationFor, computeDeviations, slidingScaleFor, ivFluidStatus } = require('../src/utils/monitoringTemplates');
+const { loadScout } = require('./helpers/scout');
+const { scoutIndex, scoutEntries, scoutSearch, scoutCalculate } = loadScout();
+
 
 test('UPIDs use the unambiguous AWB format', () => {
   for (let i = 0; i < 100; i += 1) {
@@ -200,4 +203,105 @@ test('IV bag volume is derived and warns before it runs dry', () => {
   assert.equal(wayOff.warnings[0].code, 'RATE_DEVIATION_CRITICAL');
   // Never subtract past zero.
   assert.equal(ivFluidStatus({ bagSizeMl: 1000, totalInfusedMl: 1200 }).volumeRemaining, 0);
+});
+
+// ── Awibi Scout ─────────────────────────────────────────────────────────────
+
+test('scout search finds an entry by its exact name', () => {
+  assert.equal(scoutIndex.entries.length > 100, true);
+  const { results, state } = scoutSearch(scoutIndex, 'bmi');
+  assert.equal(state, 'EXACT');
+  assert.match(results[0].entry.t, /Body Mass Index/);
+});
+
+test('scout search resolves a part-word', () => {
+  // "ketoacid" is inside "ketoacidosis" — whole-token matching returns nothing.
+  const { results } = scoutSearch(scoutIndex, 'ketoacid');
+  assert.equal(results.length > 0, true);
+  assert.match(results[0].entry.t, /DKA|ketoacid/i);
+});
+
+test('scout search survives a misspelling', () => {
+  for (const typo of ['diabetis', 'pnemonia', 'hemorrage']) {
+    const { results } = scoutSearch(scoutIndex, typo);
+    assert.equal(results.length > 0, true, `${typo} found nothing`);
+  }
+});
+
+test('scout search understands how people actually speak', () => {
+  // A nurse asks "how many drops", not "infusion rate conversion".
+  const { state, results } = scoutSearch(scoutIndex, 'how many drops');
+  assert.equal(state, 'BRIDGE');
+  assert.match(results[0].entry.t, /Drip Rate/i);
+});
+
+test('scout search folds British and American spellings together', () => {
+  const british = scoutSearch(scoutIndex, 'anaemia').results;
+  const american = scoutSearch(scoutIndex, 'anemia').results;
+  assert.equal(british.length > 0 && american.length > 0, true);
+  assert.equal(british[0].entry.g, american[0].entry.g);
+});
+
+test('scout search tells you when it is guessing', () => {
+  // A fuzzy or partial match must not be presented as an exact answer —
+  // somebody is about to dose against it.
+  const exact = scoutSearch(scoutIndex, 'bmi');
+  assert.equal(exact.note, null);
+  const vague = scoutSearch(scoutIndex, 'zzzqqq');
+  assert.equal(vague.state, 'GAP');
+  assert.equal(vague.results.length, 0);
+});
+
+test('scout calculators compute correctly', () => {
+  const bmi = scoutEntries.body_mass_index_bmi;
+  const { ok, results } = scoutCalculate(bmi, { weight: 70, height: 1.75 });
+  assert.equal(ok, true);
+  assert.equal(results[0].value, 22.9);
+  assert.equal(results[0].band, 'Normal range');
+});
+
+test('scout calculators refuse rather than produce a wrong number', () => {
+  const bmi = scoutEntries.body_mass_index_bmi;
+  // A number on screen is taken as correct, so nothing appears unless it is.
+  assert.equal(scoutCalculate(bmi, { weight: 70 }).ok, false);
+  assert.equal(scoutCalculate(bmi, { weight: 900, height: 1.75 }).ok, false);
+  assert.equal(scoutCalculate(bmi, { weight: 'seventy', height: 1.75 }).ok, false);
+  assert.equal(scoutCalculate(bmi, { weight: 70, height: 0 }).ok, false);
+});
+
+test('every scout calculator in the corpus produces a number', () => {
+  const computable = Object.values(scoutEntries).filter((e) => e.logic && e.logic.op);
+  assert.equal(computable.length > 0, true);
+  for (const entry of computable) {
+    const values = {};
+    for (const input of entry.inputs || []) {
+      if (input.type === 'boolean' || input.type === 'checkbox') values[input.key] = true;
+      else if (input.min != null && input.max != null) values[input.key] = (input.min + input.max) / 2;
+      else values[input.key] = input.default ?? 1;
+    }
+    assert.equal(scoutCalculate(entry, values).ok, true, `${entry.title} failed to compute`);
+  }
+});
+
+test('entries that only describe their formula are not offered as calculators', () => {
+  // Six entries carry the formula as prose because it branches in ways the
+  // expression format does not cover. Offering a Calculate button that can
+  // never produce an answer would be worse than showing the formula.
+  const noted = Object.values(scoutEntries).filter((e) => e.logic && !e.logic.op && e.logic.note);
+  assert.equal(noted.length > 0, true);
+  for (const entry of noted) {
+    const outcome = scoutCalculate(entry, {});
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.notComputable, true);
+    assert.equal(typeof outcome.formula, 'string');
+  }
+});
+
+test('scout search stays inside the keystroke budget', () => {
+  const queries = ['bmi', 'tetan', 'ketoacid', 'diabetis', 'drip rate', 'sepsis'];
+  const started = Date.now();
+  for (let i = 0; i < 300; i += 1) scoutSearch(scoutIndex, queries[i % queries.length]);
+  const average = (Date.now() - started) / 300;
+  // The spec allows 60ms per keystroke; anything near that would feel laggy.
+  assert.equal(average < 20, true, `average query took ${average}ms`);
 });

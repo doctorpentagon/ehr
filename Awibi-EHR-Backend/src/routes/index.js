@@ -17,6 +17,7 @@ router.use('/bookings',  require('./bookings'));
 router.use('/inquiries', require('./inquiries'));
 router.use('/messages',  require('./messages'));
 router.use('/alerts',    require('./alerts'));
+router.use('/scout',     require('./scout'));
 router.use('/encounter-types', require('./encounterTypes').router);
 // Unauthenticated clinic pages and booking intake.
 router.use('/public',    require('./public'));

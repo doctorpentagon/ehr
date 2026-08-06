@@ -63,6 +63,7 @@ import Emergency from './pages/emergency/Emergency';
 import Bookings from './pages/bookings/Bookings';
 import Inquiries from './pages/bookings/Inquiries';
 import Messages from './pages/messages/Messages';
+import Scout from './pages/scout/Scout';
 import Households from './pages/households/Households';
 import InsurancePage from './pages/insurance/Insurance';
 import ClinicLanding from './pages/public/ClinicLanding';
@@ -184,6 +185,9 @@ export default function App() {
         <Route path="nursing/patient/:patientId" element={<RoleRoute module="monitoring"><PatientMonitoringOverview /></RoleRoute>} />
         <Route path="emergency" element={<RoleRoute module="emergency"><Emergency /></RoleRoute>} />
         <Route path="bookings" element={<RoleRoute module="bookings"><Bookings /></RoleRoute>} />
+        {/* Open to every signed-in member of staff: published reference material,
+            not patient data. Gating it would only send people to their phones. */}
+        <Route path="scout" element={<Scout />} />
         <Route path="messages" element={<Messages />} />
         <Route path="inquiries" element={<RoleRoute module="patients"><Inquiries /></RoleRoute>} />
         <Route path="households" element={<RoleRoute module="households"><Households /></RoleRoute>} />
