@@ -29,11 +29,26 @@ function assert(name, condition, detail = '') {
   }
 }
 
-async function request(pathname, { token, method = 'GET', body, form } = {}) {
+/**
+ * A fresh client address, so one group of checks cannot exhaust another's
+ * rate-limit budget.
+ *
+ * The public booking endpoints allow ten attempts an hour from one address.
+ * With every check sharing a single address, adding a few enquiry checks
+ * silently pushed the booking checks over that limit and they began failing on
+ * a 429 — a failure that looks like a broken endpoint and is not.
+ */
+let ipCounter = 0;
+function freshClientIp() {
+  ipCounter += 1;
+  return `2001:db8:${Date.now().toString(16)}::${ipCounter.toString(16)}`;
+}
+
+async function request(pathname, { token, method = 'GET', body, form, clientIp } = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     method,
     headers: {
-      'x-forwarded-for': smokeClientIp,
+      'x-forwarded-for': clientIp || smokeClientIp,
       ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
@@ -881,12 +896,24 @@ async function run() {
     }
 
     // ── Public, unauthenticated surface ─────────────────────────────────────
-    const clinics = await fetch(`${baseUrl}/public/clinics`).then((r) => r.json());
+    //
+    // These call fetch directly rather than through request(), so they carried
+    // no forwarded address: every run shared one rate-limit budget with every
+    // previous run, and the booking checks eventually began failing on a 429
+    // that had nothing to do with the endpoint. One fresh address per run
+    // makes the suite deterministic again.
+    const publicIp = freshClientIp();
+    const pub = (path, init = {}) => fetch(`${baseUrl}${path}`, {
+      ...init,
+      headers: { 'x-forwarded-for': publicIp, ...(init.headers || {}) },
+    });
+
+    const clinics = await pub('/public/clinics').then((r) => r.json());
     const slug = clinics.clinics?.find((c) => c.slug?.includes('uch'))?.slug;
     assert('public clinic directory is reachable without auth', Boolean(slug), 'no slug');
 
     if (slug) {
-      const page = await fetch(`${baseUrl}/public/clinic/${slug}`).then((r) => r.json());
+      const page = await pub(`/public/clinic/${slug}`).then((r) => r.json());
       assert('public clinic page loads without auth', Boolean(page.clinic?.name), 'no clinic');
       // The public page must never expose staff contact details.
       const doctor = page.doctors?.[0];
@@ -894,13 +921,13 @@ async function run() {
         !doctor || (!('email' in doctor) && !('phone' in doctor) && !('staffId' in doctor)),
         `keys ${doctor ? Object.keys(doctor).join(',') : 'none'}`);
 
-      const triage = await fetch(`${baseUrl}/public/symptom-checker`, {
+      const triage = await pub('/public/symptom-checker', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ redFlags: ['chest_pain'], severity: 5 }),
       }).then((r) => r.json());
       assert('a red flag routes the patient to emergency', triage.routing === 'EMERGENCY', `got ${triage.routing}`);
 
-      const verify = await fetch(`${baseUrl}/public/clinic/${slug}/verify-patient`, {
+      const verify = await pub(`/public/clinic/${slug}/verify-patient`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: '09090909090' }),
       }).then((r) => r.json());
@@ -909,13 +936,13 @@ async function run() {
         !('lastName' in verify) && !('dateOfBirth' in verify) && !('universalPatientId' in verify),
         `keys ${Object.keys(verify).join(',')}`);
 
-      const badPhone = await fetch(`${baseUrl}/public/clinic/${slug}/booking`, {
+      const badPhone = await pub(`/public/clinic/${slug}/booking`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fullName: 'Smoke Tester', phone: '12345', requestedAt: new Date(Date.now() + 86400000).toISOString() }),
       });
       assert('a malformed phone number is rejected', badPhone.status === 400, `status ${badPhone.status}`);
 
-      const created = await fetch(`${baseUrl}/public/clinic/${slug}/booking`, {
+      const created = await pub(`/public/clinic/${slug}/booking`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fullName: 'Smoke Booking', phone: '08012345678',
@@ -1463,7 +1490,9 @@ async function run() {
     assert('the clinic page resolves by stored slug without auth', page.status === 200, `status ${page.status}`);
     assert('the public page exposes no licence number', !/licenseNumber/.test(JSON.stringify(page.data || {})));
 
-    const send = (body) => request(`/public/clinic/${slug}/inquiry`, { token: null, method: 'POST', body });
+    // Its own address: these share a rate limit with the booking checks.
+    const inquiryIp = freshClientIp();
+    const send = (body) => request(`/public/clinic/${slug}/inquiry`, { token: null, method: 'POST', body, clientIp: inquiryIp });
 
     // The old contact form only sent mail. If SMTP failed, an enquiry describing
     // chest pain vanished with nothing to show it had ever arrived.

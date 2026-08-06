@@ -48,11 +48,19 @@ function Highlight({ text, query }) {
     [query],
   );
   if (!terms.length || !text) return <>{text}</>;
-  const pattern = new RegExp(`(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'ig');
+
+  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const splitter = new RegExp(`(${escaped.join('|')})`, 'ig');
+  // Membership test rather than re-running the pattern. A /g regex carries
+  // lastIndex between calls, so testing it inside a loop gives different answers
+  // for identical input depending on what came before — the kind of bug that
+  // survives review because it usually happens to work.
+  const wanted = new Set(terms);
+
   return (
     <>
-      {String(text).split(pattern).map((part, i) => (
-        pattern.test(part)
+      {String(text).split(splitter).map((part, i) => (
+        wanted.has(part.toLowerCase())
           ? <mark key={i} className="bg-amber-100 text-inherit rounded-sm px-0.5">{part}</mark>
           : <React.Fragment key={i}>{part}</React.Fragment>
       ))}
@@ -201,32 +209,117 @@ function CalculatorPanel({ entry }) {
   );
 }
 
-/** Renders whatever body shape an entry happens to have. */
+const humanise = (s) => String(s).replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
+
+/**
+ * A row of objects — the Glasgow Coma Scale, Child-Pugh, shock types.
+ *
+ * These are the entries a clinician most wants, and they are scoring tables.
+ * The keys vary by entry, so the columns are derived from the data rather than
+ * hardcoded. Rendered as an actual table: `{score: 4, response: "Opens eyes"}`
+ * shown as JSON is worse than useless at a bedside.
+ */
+function BodyTable({ rows }) {
+  const columns = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+  return (
+    <div className="overflow-x-auto border border-gray-200 rounded-lg">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-gray-50 border-b border-gray-200">
+            {columns.map((c) => (
+              <th key={c} className="text-left px-3 py-2 font-medium text-gray-600 whitespace-nowrap">
+                {humanise(c)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} className="border-b border-gray-100 last:border-0">
+              {columns.map((c) => (
+                <td key={c} className="px-3 py-2 text-gray-800 align-top">
+                  {row[c] === undefined || row[c] === null
+                    ? <span className="text-gray-300">—</span>
+                    : typeof row[c] === 'object' ? JSON.stringify(row[c]) : String(row[c])}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Key-value content, e.g. paediatric dosing by blood component. */
+function BodyPairs({ pairs }) {
+  return (
+    <dl className="border border-gray-200 rounded-lg divide-y divide-gray-100">
+      {Object.entries(pairs).map(([key, value]) => (
+        <div key={key} className="px-3 py-2 sm:flex sm:gap-4">
+          <dt className="text-sm font-medium text-gray-600 sm:w-44 shrink-0">{humanise(key)}</dt>
+          <dd className="text-sm text-gray-800">
+            {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/**
+ * Renders whatever shape a body section happens to be.
+ *
+ * The corpus uses five: prose, a list of lines, a table of rows, a set of
+ * key-value pairs, and booleans that are internal routing flags rather than
+ * content. Anything unrecognised is skipped rather than dumped as JSON —
+ * showing a clinician a raw object erodes trust in everything around it.
+ */
 function Body({ body }) {
   if (!body || typeof body !== 'object' || !Object.keys(body).length) return null;
+
+  const sections = Object.entries(body).filter(([, content]) => {
+    // Flags such as `resolves_broad_query` steer the search; they are not for
+    // reading and were previously rendered as the literal word "true".
+    if (typeof content === 'boolean') return false;
+    if (content === null || content === undefined) return false;
+    if (Array.isArray(content) && content.length === 0) return false;
+    if (typeof content === 'string' && !content.trim()) return false;
+    return true;
+  });
+
+  if (!sections.length) return null;
+
   return (
     <>
-      {Object.entries(body).map(([heading, content]) => (
-        <section key={heading}>
-          <h3 className="text-sm font-semibold text-gray-900 mb-1.5 capitalize">
-            {heading.replace(/_/g, ' ')}
-          </h3>
-          {Array.isArray(content) ? (
-            <ul className="space-y-1.5">
-              {content.map((item, i) => (
-                <li key={i} className="text-sm text-gray-700 flex gap-2">
-                  <span className="text-gray-300 select-none">·</span>
-                  <span>{typeof item === 'string' ? item : item.text || JSON.stringify(item)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-gray-700 whitespace-pre-wrap">
-              {typeof content === 'string' ? content : JSON.stringify(content)}
-            </p>
-          )}
-        </section>
-      ))}
+      {sections.map(([heading, content]) => {
+        const isRowTable = Array.isArray(content)
+          && content.length > 0
+          && content.every((r) => r && typeof r === 'object' && !Array.isArray(r));
+
+        return (
+          <section key={heading}>
+            <h3 className="text-sm font-semibold text-gray-900 mb-1.5">{humanise(heading)}</h3>
+
+            {isRowTable ? (
+              <BodyTable rows={content} />
+            ) : Array.isArray(content) ? (
+              <ul className="space-y-1.5">
+                {content.map((item, i) => (
+                  <li key={i} className="text-sm text-gray-700 flex gap-2">
+                    <span className="text-gray-300 select-none">·</span>
+                    <span>{typeof item === 'string' ? item : item.text || item.label || ''}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : typeof content === 'object' ? (
+              <BodyPairs pairs={content} />
+            ) : (
+              <p className="text-sm text-gray-700 whitespace-pre-wrap">{String(content)}</p>
+            )}
+          </section>
+        );
+      })}
     </>
   );
 }
@@ -508,22 +601,53 @@ export default function Scout() {
       {!query && !typeFilter && (
         <div className="space-y-3">
           {TYPE_GROUPS.map((group) => {
-            const available = group.types.filter((t) => index.byType?.has?.(t) || index.types.includes(t));
+            // Only offer a category that actually holds something. The corpus
+            // declares 50 types but only fills some of them, and a chip that
+            // opens an empty screen makes the whole library feel broken.
+            const available = group.types
+              .map((t) => ({ type: t, count: index.byType?.get(t)?.length || 0 }))
+              .filter((t) => t.count > 0);
             if (!available.length) return null;
             return (
               <div key={group.label}>
                 <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">{group.label}</h2>
                 <div className="flex flex-wrap gap-1.5">
-                  {available.map((t) => (
-                    <button key={t} onClick={() => setTypeFilter(t)}
+                  {available.map(({ type, count }) => (
+                    <button key={type} onClick={() => setTypeFilter(type)}
                       className="min-h-11 px-3 border border-gray-300 rounded-lg text-sm text-gray-700 hover:border-[#2D5BFF] hover:text-[#2D5BFF] capitalize">
-                      {prettyType(t)}
+                      {prettyType(type)}
+                      <span className="text-gray-400 ml-1.5 text-xs">{count}</span>
                     </button>
                   ))}
                 </div>
               </div>
             );
           })}
+
+          {/* Anything the groups above do not name. Without this, entire types
+              would exist in the library with no way to browse to them. */}
+          {(() => {
+            const grouped = new Set(TYPE_GROUPS.flatMap((g) => g.types));
+            const rest = [...(index.byType?.keys() || [])]
+              .filter((t) => !grouped.has(t))
+              .map((t) => ({ type: t, count: index.byType.get(t).length }))
+              .sort((a, b) => b.count - a.count);
+            if (!rest.length) return null;
+            return (
+              <div>
+                <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">More</h2>
+                <div className="flex flex-wrap gap-1.5">
+                  {rest.map(({ type, count }) => (
+                    <button key={type} onClick={() => setTypeFilter(type)}
+                      className="min-h-11 px-3 border border-gray-300 rounded-lg text-sm text-gray-700 hover:border-[#2D5BFF] hover:text-[#2D5BFF] capitalize">
+                      {prettyType(type)}
+                      <span className="text-gray-400 ml-1.5 text-xs">{count}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 

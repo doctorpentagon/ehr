@@ -75,12 +75,26 @@ function NavItem({ item, allowed, onClose }) {
           'flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors',
           isActive
             ? 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold'
-            : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'
+            : item.featured
+              // A featured item keeps its colour when idle so the eye finds it
+              // without the row shouting — this sits in a list of twenty-six.
+              ? 'text-[#2D5BFF] hover:bg-[#2D5BFF]/8'
+              : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'
         )
       }
     >
       <Icon className="size-4.5 shrink-0" />
-      <span>{item.label}</span>
+      <span>
+        {item.label}
+        {/* Superscript rather than a pill: it rides the baseline of the word
+            like a trademark mark, which reads as part of the name instead of
+            as another badge competing with the rest of the sidebar. */}
+        {item.badge && (
+          <sup className="ml-0.5 text-[9px] font-bold tracking-wide align-super text-[#2D5BFF]">
+            {item.badge}
+          </sup>
+        )}
+      </span>
     </NavLink>
   );
 }

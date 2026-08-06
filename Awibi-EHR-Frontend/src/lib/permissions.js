@@ -39,13 +39,15 @@ export function can(role, subRole, module) {
 // section: groups items visually in the sidebar
 export const NAV_ITEMS = [
   { key: 'overview',     label: 'Overview',        icon: 'LayoutDashboard', path: '/dashboard',              section: 'General', end: true },
-  // Reference and calculators. key:null means every signed-in role sees it —
-  // a nurse checking a drip rate needs it as much as a consultant does.
-  { key: null,           label: 'Scout',            icon: 'Compass',         path: '/dashboard/scout',        section: 'Clinical' },
   { key: 'patients',     label: 'Patients',         icon: 'Users',           path: '/dashboard/patients',     section: 'Clinical' },
   { key: 'appointments', label: 'Appointments',     icon: 'Calendar',        path: '/dashboard/appointments', section: 'Clinical' },
   // "Cases" matches the clinical language used in the designs and on the ward.
   { key: 'cases',        label: 'Cases',            icon: 'FileText',        path: '/dashboard/cases',        section: 'Clinical' },
+  // Sits after Cases: a clinician reaches for a score or a drip rate while
+  // they are in the middle of an encounter, not as a separate errand.
+  // key:null means every signed-in role sees it — a nurse checking a dose needs
+  // it as much as a consultant does. Marked PRO because it is the flagship.
+  { key: null,           label: 'Scout',            icon: 'Compass',         path: '/dashboard/scout',        section: 'Clinical', badge: 'PRO', featured: true },
   { key: 'lab',          label: 'Diagnostics',      icon: 'FlaskConical',    path: '/dashboard/lab',          section: 'Clinical' },
   { key: 'admissions',   label: 'Admissions',       icon: 'BedDouble',       path: '/dashboard/admissions',   section: 'Clinical' },
   { key: 'emergency',    label: 'Emergency',        icon: 'AlertTriangle',   path: '/dashboard/emergency',    section: 'Clinical' },
