@@ -83,6 +83,7 @@ const SCREENS = [
   ['bookings', '/bookings', 'bookings'],
   ['households', '/households', 'households'],
   ['affiliates', '/affiliates', 'affiliates'],
+  ['pharmacy', '/orders/pharmacy/queue', 'orders', 'pharmacy'],
 ];
 
 (async () => {
@@ -109,8 +110,8 @@ const SCREENS = [
     const auth = { Authorization: `Bearer ${body.accessToken}` };
 
     const got = [];
-    for (const [module, probe, routeFile] of SCREENS) {
-      const guard = guardFor(routeFile) || module;
+    for (const [module, probe, routeFile, explicitGuard] of SCREENS) {
+      const guard = explicitGuard || guardFor(routeFile) || module;
       const allowed = can(acct.role, acct.subRole, guard);
       const r = await req(probe, { headers: auth });
 

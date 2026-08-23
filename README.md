@@ -250,13 +250,13 @@ alongside it.
 
 | Role | subRole | Module Access |
 |------|---------|---------------|
-| `SUPER_ADMIN` | — | All modules across all facilities |
-| `ADMIN` | — | All modules except clinical cases (by design) |
-| `RECORDS` | — | Patients, appointments, admissions, billing |
-| `CLINICIAN` | `DOCTOR` | Patients, cases, appointments, lab results |
-| `CLINICIAN` | `NURSE` | Patients, cases (read), appointments, admissions |
-| `CLINICIAN` | `LAB` | Lab module only |
-| `CLINICIAN` | `PHARMACIST` | Prescriptions (read), billing |
+| `SUPER_ADMIN` | — | Awibi platform operations only; refused from facility clinical routes |
+| `ADMIN` | — | Facility visibility/configuration, inventory and operations; cannot sign clinical notes or prescribe |
+| `RECORDS` | — | Registration, patient records, appointments, bookings, enquiries, emergency intake and households |
+| `CLINICIAN` | `DOCTOR` | Consultations, orders/prescriptions, diagnostics ordering/review and nursing-record review; no bed-board operation |
+| `CLINICIAN` | `NURSE` | Nursing monitoring, drug chart, worklist, handover, admissions and bed allocation |
+| `CLINICIAN` | diagnostic specialties | Discipline-scoped laboratory/imaging worklists and result processing |
+| `CLINICIAN` | `PHARMACIST` | Prescription queue, patient medication history, dispensing and facility inventory |
 
 Every clinical route: `[authenticate, tenant, requirePermission(module)]`. The frontend mirrors permissions — unauthorized modules show a lock icon and cannot be accessed via URL.
 
@@ -593,6 +593,25 @@ Skipping requires a reason. A recorded skip is a clinical fact; one that simply 
 is a hole nobody can explain later. Overdue is judged from the last execution with 25% grace,
 so one late round does not mark every later one overdue forever.
 
+### Cross-department order routing
+
+Doctors use one **Clinical → Orders & prescriptions** workspace. Medication orders enter the
+pharmacy queue and nursing drug chart; care/monitoring orders enter nursing's standing-order
+queue and can offer the exact chart to open; laboratory, imaging and ECG requests enter the
+discipline-scoped Diagnostics worklist; admission requests enter Nursing's Admissions & Beds
+screen. The receiving team completes the operational step, so a doctor never has to operate a
+bed board and a nurse never has to copy a doctor's instruction out of a consultation note.
+
+### Pharmacy
+
+The pharmacy workbench has a patient-linked prescription queue, auditable partial/full dispense
+events, pharmacist attribution, quantity/unit/amount capture, atomic stock decrement, current
+stock and reorder levels, nearest-expiry visibility, and an additional note requirement for
+controlled medicines. The local demo includes a dedicated pharmacist account. This is a beta
+dispensing core, not an enterprise procurement system: batch/lot/FEFO, purchase orders, goods
+receipt, supplier returns, recalls/quarantine, dual-sign controlled-drug registers, branch
+transfers and full payer reconciliation remain production gates.
+
 ### Resuscitation
 
 `ResuscitationEvent` + `ResuscitationTimelineEntry`, with ACLS, Sepsis Six and a deteriorating-
@@ -633,13 +652,19 @@ because ward conversations that matter currently happen on personal WhatsApp, wh
 patient details on personal phones outside the record. Not a clinical order — anything that
 must be acted on is an Order.
 
+Internal clinical messages do **not** wait for an administrator to approve them: holding a nurse's
+urgent message about a patient would create a safety delay. Patient WhatsApp/email launch actions
+are separate, explicit external-contact actions and carry a privacy reminder. Production outbound
+automation still requires consent/opt-out rules, approved templates, delivery audit, sender identity
+and provider webhooks; it must never expose clinical text in notification-provider logs.
+
 ---
 
 ## What Is NOT Built
 
 See **[NOT_BUILT.md](NOT_BUILT.md)** for the full checkable list. Summary:
 
-- Pharmacy workbench is not built: prescriptions and medication administration exist, but formulary inventory, stock ledger, verification and dispensing do not
+- Advanced pharmacy procurement, batch/lot/FEFO, recall/quarantine, witnessed controlled-drug and branch-transfer controls are not built
 - Facility equipment/instrument asset register is not built
 - Patient self-booking from Identity Portal
 - Playwright / Cypress end-to-end tests — the browser layer is the one substantial untested surface
@@ -654,13 +679,14 @@ See **[NOT_BUILT.md](NOT_BUILT.md)** for the full checkable list. Summary:
 ## Testing
 
 ```bash
-npm run test:unit      # 35 checks — pure logic, no server needed
-npm run test:contract  # every frontend API call against the routes the server serves
-npm run test:smoke     # 363 checks — every endpoint, every role, against a live API
-npm run test:loops     # 47 checks — each workflow from initiation to completion
+npm run test:unit      # 38 checks — pure logic, no server needed
+npm run test:contract  # 183 distinct frontend calls resolve across 253 backend routes
+npm run test:smoke     # 364 checks — every endpoint, every role, against a live API
+npm run test:loops     # 60 checks — each workflow from initiation to completion
+npm run test:clinical-closures # 38 critical clinical lifecycle checks
 npm run test:roles     # every screen each role is offered, actually opened
 npm run test:tenancy   # one facility's records fetched with another's token
-npm run test:all       # all six
+npm run test:all       # all seven backend suites
 ```
 
 In the frontend, `npm run build` refuses to build if either wiring check fails:

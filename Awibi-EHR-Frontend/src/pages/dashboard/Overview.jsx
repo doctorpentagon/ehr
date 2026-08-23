@@ -681,11 +681,13 @@ function PharmacistOverview({ stats, loading }) {
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-4">
         <StatCard label="Total Patients" value={stats?.kpi?.totalPatients} color="#335CF4" icon={IconUsers} loading={loading} onClick={() => navigate('/dashboard/patients')} />
+        <StatCard label="Pharmacy Queue" value="Open" color="#7C3AED" icon={IconPill} loading={false} onClick={() => navigate('/dashboard/pharmacy')} />
       </div>
       <Card>
         <CardHeader><CardTitle className="text-base">Pharmacy workspace</CardTitle></CardHeader>
         <CardContent>
-          <p className="text-sm text-gray-500">Dispensing workflow is not yet implemented. Patient medication histories remain read-only until it is completed.</p>
+          <p className="text-sm text-gray-500 mb-4">Verify prescriptions, issue medicines against the patient record, record amount, and monitor facility stock.</p>
+          <button onClick={() => navigate('/dashboard/pharmacy')} className="px-4 py-2.5 rounded-lg bg-purple-700 text-white text-sm font-semibold">Open pharmacy</button>
         </CardContent>
       </Card>
     </div>
@@ -761,7 +763,7 @@ export default function Overview() {
       {role === 'CLINICIAN' && subRole === 'NURSE' && (
         <NurseOverview stats={stats} appointments={appointments} loading={loading} />
       )}
-      {role === 'CLINICIAN' && subRole === 'LAB' && (
+      {role === 'CLINICIAN' && ['LAB','RADIOLOGIST','RADIOGRAPHER','HAEMATOLOGIST','CHEMICAL_PATHOLOGIST','HISTOPATHOLOGIST','MICROBIOLOGIST'].includes(subRole) && (
         <LabOverview stats={stats} loading={loading} />
       )}
       {role === 'CLINICIAN' && subRole === 'PHARMACIST' && (

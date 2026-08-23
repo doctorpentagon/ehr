@@ -39,6 +39,7 @@ function getPrivateDemoCredentials() {
     nurse: process.env.DEMO_NURSE_EMAIL.toLowerCase(),
     records: process.env.DEMO_RECORDS_EMAIL.toLowerCase(),
     lab: process.env.DEMO_LAB_EMAIL.toLowerCase(),
+    pharmacist: (process.env.DEMO_PHARMACIST_EMAIL || admin.replace(/^admin\./, 'pharmacist.')).toLowerCase(),
   };
 }
 
@@ -56,6 +57,7 @@ async function seed() {
       prisma.invoice.deleteMany({}),
       prisma.admission.deleteMany({}),
       prisma.labRequest.deleteMany({}),
+      prisma.dispense.deleteMany({}),
       prisma.prescription.deleteMany({}),
       prisma.condition.deleteMany({}),
       prisma.allergy.deleteMany({}),
@@ -74,7 +76,13 @@ async function seed() {
 
   const existingFacility = await prisma.facility.findFirst({ where: { name: 'UCH Ibadan Demo' } });
   if (existingFacility && !RESET) {
-    console.log('✅  Demo data already seeded. Use --reset to re-seed.');
+    const pharmacyPassword = await bcrypt.hash(demoCredentials.password, 12);
+    await prisma.user.upsert({
+      where: { email: demoCredentials.pharmacist },
+      update: { facilityId: existingFacility.id, isActive: true, role: 'CLINICIAN', subRole: 'PHARMACIST' },
+      create: { firstName: 'Amina', lastName: 'Yusuf', email: demoCredentials.pharmacist, passwordHash: pharmacyPassword, role: 'CLINICIAN', subRole: 'PHARMACIST', facilityId: existingFacility.id, staffId: 'UCH-STF-100006', emailVerified: true, isActive: true, specialty: 'Clinical Pharmacy' },
+    });
+    console.log('✅  Demo data already seeded; pharmacy demo access verified. Use --reset to re-seed all fixtures.');
     process.exit(0);
   }
 
@@ -104,12 +112,13 @@ async function seed() {
   const hash = pw => bcrypt.hash(pw, 12);
   const PASS = demoCredentials.password;
 
-  const [admin, doctor, nurse, records, lab, superAdmin] = await Promise.all([
+  const [admin, doctor, nurse, records, lab, pharmacist, superAdmin] = await Promise.all([
     prisma.user.create({ data: { firstName: 'Wasiu', lastName: 'Maleek', email: demoCredentials.admin, passwordHash: await hash(PASS), role: 'ADMIN', facilityId: facility.id, staffId: 'UCH-STF-100001', emailVerified: true, isActive: true, specialty: 'Administration' } }),
     prisma.user.create({ data: { firstName: 'Dr. Amaka', lastName: 'Okafor', email: demoCredentials.doctor, passwordHash: await hash(PASS), role: 'CLINICIAN', subRole: 'DOCTOR', facilityId: facility.id, staffId: 'UCH-STF-100002', emailVerified: true, isActive: true, specialty: 'Internal Medicine' } }),
     prisma.user.create({ data: { firstName: 'Bisi', lastName: 'Adeyemi', email: demoCredentials.nurse, passwordHash: await hash(PASS), role: 'CLINICIAN', subRole: 'NURSE', facilityId: facility.id, staffId: 'UCH-STF-100003', emailVerified: true, isActive: true } }),
     prisma.user.create({ data: { firstName: 'Tunde', lastName: 'Adeola', email: demoCredentials.records, passwordHash: await hash(PASS), role: 'RECORDS', facilityId: facility.id, staffId: 'UCH-STF-100004', emailVerified: true, isActive: true } }),
     prisma.user.create({ data: { firstName: 'Ngozi', lastName: 'Eze', email: demoCredentials.lab, passwordHash: await hash(PASS), role: 'CLINICIAN', subRole: 'LAB', facilityId: facility.id, staffId: 'UCH-STF-100005', emailVerified: true, isActive: true, specialty: 'Laboratory Science' } }),
+    prisma.user.create({ data: { firstName: 'Amina', lastName: 'Yusuf', email: demoCredentials.pharmacist, passwordHash: await hash(PASS), role: 'CLINICIAN', subRole: 'PHARMACIST', facilityId: facility.id, staffId: 'UCH-STF-100006', emailVerified: true, isActive: true, specialty: 'Clinical Pharmacy' } }),
     // Awibi platform super administrator (not a facility employee). Homed to a
     // facility because User.facilityId is required; cross-facility oversight is
     // delivered by the audited facility switcher, not by widening tenant scope.

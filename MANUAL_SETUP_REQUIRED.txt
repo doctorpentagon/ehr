@@ -61,6 +61,7 @@ This file contains work that cannot be made production-complete by local source 
 [ ] Establish biomedical/IT device inventory, patching, service, replacement, and downtime contacts.
 
 7. MEDICINES, CLINICAL KNOWLEDGE, AND PATIENT SAFETY
+[x] Local synthetic beta now has a pharmacist demo, prescription queue, patient-linked dispense events, quantity/amount, atomic stock decrement, reorder levels and nearest-expiry visibility.
 [ ] License and integrate an authoritative drug interaction, allergy, duplication, dose, pregnancy, renal/hepatic, and formulary knowledge source.
 [ ] Validate drug naming, strengths, pack sizes, controlled-drug workflow, procurement, inventory, dispensing, returns, expiry, stock counts, and recall procedures.
 [ ] Validate WHO paediatric anthropometry/BMI datasets and charts under a named paediatric owner; adult BMI bands must never classify children.

@@ -14,6 +14,9 @@ const prescribe = [authenticate, tenant, requirePermission('prescriptions_write'
 // Nurses execute them.
 const execute = [authenticate, tenant, requirePermission('drug_admin_write')];
 const catalogueWrite = [authenticate, tenant, requirePermission('settings')];
+const pharmacyRead = [authenticate, tenant, requirePermission('pharmacy')];
+const pharmacyWrite = [authenticate, tenant, requirePermission('pharmacy_write')];
+const inventoryWrite = [authenticate, tenant, requirePermission('inventory_write')];
 
 // Prisma orders enums by DECLARATION order, and NursingTaskPriority is declared
 // ROUTINE, URGENT, STAT — so `priority: 'asc'` would sink a STAT task to the
@@ -77,13 +80,132 @@ router.post('/drug-catalogue', catalogueWrite, async (req, res, next) => {
   }
 });
 
+// ── Pharmacy dispensing and inventory ──────────────────────────────────────
+router.get('/pharmacy/queue', pharmacyRead, async (req, res, next) => {
+  try {
+    const { status = 'ACTIVE', search } = req.query;
+    const where = { facilityId: req.ctx.facilityId };
+    if (status && status !== 'ALL') where.status = status;
+    if (search) {
+      where.OR = [
+        { drugName: { contains: search, mode: 'insensitive' } },
+        { patient: { is: { firstName: { contains: search, mode: 'insensitive' } } } },
+        { patient: { is: { lastName: { contains: search, mode: 'insensitive' } } } },
+        { patient: { is: { mrn: { contains: search, mode: 'insensitive' } } } },
+      ];
+    }
+    const prescriptions = await prisma.prescription.findMany({
+      where, orderBy: { createdAt: 'asc' }, take: 100,
+      include: {
+        patient: { select: { id: true, firstName: true, lastName: true, mrn: true, universalPatientId: true, dateOfBirth: true, gender: true } },
+        dispenses: { orderBy: { dispensedAt: 'desc' } },
+      },
+    });
+    const prescriberIds = [...new Set(prescriptions.map((item) => item.prescribedById).filter(Boolean))];
+    const prescribers = prescriberIds.length ? await prisma.user.findMany({
+      where: { id: { in: prescriberIds }, facilityId: req.ctx.facilityId },
+      select: { id: true, firstName: true, lastName: true, staffId: true },
+    }) : [];
+    const names = Object.fromEntries(prescribers.map((item) => [item.id, item]));
+    res.json({
+      prescriptions: prescriptions.map((item) => ({ ...item, prescribedBy: names[item.prescribedById] || null })),
+      total: prescriptions.length,
+    });
+  } catch (e) { next(e); }
+});
+
+router.get('/pharmacy/inventory', pharmacyRead, async (req, res, next) => {
+  try {
+    const { search } = req.query;
+    const where = { facilityId: req.ctx.facilityId, isActive: true };
+    if (search) where.OR = [
+      { name: { contains: search, mode: 'insensitive' } },
+      { genericName: { contains: search, mode: 'insensitive' } },
+      { category: { contains: search, mode: 'insensitive' } },
+    ];
+    const items = await prisma.drugCatalogue.findMany({ where, orderBy: [{ name: 'asc' }], take: 300 });
+    const lowStock = items.filter((item) => item.stockOnHand <= item.reorderLevel).length;
+    const expiringSoon = items.filter((item) => item.nextExpiryDate && new Date(item.nextExpiryDate).getTime() <= Date.now() + 90 * 86400000).length;
+    res.json({ items, counts: { total: items.length, lowStock, expiringSoon } });
+  } catch (e) { next(e); }
+});
+
+router.put('/pharmacy/inventory/:id', inventoryWrite, async (req, res, next) => {
+  try {
+    const existing = await prisma.drugCatalogue.findFirst({ where: { id: req.params.id, facilityId: req.ctx.facilityId } });
+    if (!existing) return res.status(404).json({ error: 'Medicine not found in this facility formulary' });
+    const { stockOnHand, reorderLevel, unitLabel, unitPrice, nextExpiryDate } = req.body || {};
+    const stock = Number(stockOnHand);
+    const reorder = Number(reorderLevel);
+    if (!Number.isFinite(stock) || stock < 0) return res.status(400).json({ error: 'stockOnHand must be zero or more' });
+    if (!Number.isFinite(reorder) || reorder < 0) return res.status(400).json({ error: 'reorderLevel must be zero or more' });
+    const item = await prisma.drugCatalogue.update({
+      where: { id: existing.id },
+      data: {
+        stockOnHand: stock, reorderLevel: reorder,
+        unitLabel: String(unitLabel || '').trim() || null,
+        ...(unitPrice !== undefined ? { unitPrice: Number(unitPrice) } : {}),
+        nextExpiryDate: nextExpiryDate ? new Date(nextExpiryDate) : null,
+      },
+    });
+    audit(req, 'pharmacy.inventory.update', 'DrugCatalogue', item.id, `Stock set to ${stock} ${item.unitLabel || 'units'}`);
+    res.json(item);
+  } catch (e) { next(e); }
+});
+
+router.post('/pharmacy/dispense/:prescriptionId', pharmacyWrite, async (req, res, next) => {
+  try {
+    const prescription = await prisma.prescription.findFirst({
+      where: { id: req.params.prescriptionId, facilityId: req.ctx.facilityId },
+    });
+    if (!prescription) return res.status(404).json({ error: 'Prescription not found' });
+    if (prescription.status === 'CANCELLED') return res.status(409).json({ error: 'A cancelled prescription cannot be dispensed' });
+
+    const { drugCatalogueId, quantity, unit, notes, complete = true } = req.body || {};
+    const qty = Number(quantity);
+    if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'Enter a quantity greater than zero' });
+    const stockItem = await prisma.drugCatalogue.findFirst({
+      where: { id: drugCatalogueId, facilityId: req.ctx.facilityId, isActive: true },
+    });
+    if (!stockItem) return res.status(404).json({ error: 'Choose the matching medicine from facility stock' });
+    if (stockItem.isControlled && String(notes || '').trim().length < 3) {
+      return res.status(400).json({ error: 'Controlled medicine dispensing needs a register or witness note' });
+    }
+    if (stockItem.stockOnHand < qty) return res.status(409).json({ error: `Only ${stockItem.stockOnHand} ${stockItem.unitLabel || 'units'} available` });
+
+    const amount = Number(stockItem.unitPrice) * qty;
+    const result = await prisma.$transaction(async (tx) => {
+      const reduced = await tx.drugCatalogue.updateMany({
+        where: { id: stockItem.id, facilityId: req.ctx.facilityId, stockOnHand: { gte: qty } },
+        data: { stockOnHand: { decrement: qty } },
+      });
+      if (reduced.count !== 1) throw Object.assign(new Error('Stock changed while dispensing; check the quantity and try again'), { status: 409 });
+      const dispense = await tx.dispense.create({
+        data: {
+          facilityId: req.ctx.facilityId, prescriptionId: prescription.id, patientId: prescription.patientId,
+          drugCatalogueId: stockItem.id, quantity: qty, unit: unit || stockItem.unitLabel || null,
+          unitPrice: Number(stockItem.unitPrice), amount, dispensedById: req.ctx.userId,
+          notes: String(notes || '').trim() || null,
+        },
+      });
+      const updatedPrescription = await tx.prescription.update({
+        where: { id: prescription.id },
+        data: { dispensedAt: new Date(), ...(complete ? { status: 'COMPLETED' } : {}) },
+      });
+      return { dispense, prescription: updatedPrescription };
+    });
+    audit(req, 'pharmacy.dispense', 'Prescription', prescription.id, `${qty} ${stockItem.unitLabel || 'units'} of ${stockItem.name}; NGN ${amount}`);
+    res.status(201).json({ ...result, amount, remainingStock: stockItem.stockOnHand - qty });
+  } catch (e) { next(e); }
+});
+
 // ── Unified order view for a patient ────────────────────────────────────────
 router.get('/patient/:patientId', read, async (req, res, next) => {
   try {
     await requireTenantPatient(req.ctx.facilityId, req.params.patientId);
     const scope = { patientId: req.params.patientId, facilityId: req.ctx.facilityId };
 
-    const [medications, investigations, tasks] = await prisma.$transaction([
+    const [medications, investigations, tasks, standingOrders] = await prisma.$transaction([
       prisma.prescription.findMany({
         where: { ...scope, status: 'ACTIVE' }, orderBy: { createdAt: 'desc' },
         include: { administrations: { orderBy: { administeredAt: 'desc' }, take: 20 } },
@@ -95,9 +217,13 @@ router.get('/patient/:patientId', read, async (req, res, next) => {
         where: { ...scope, status: { in: ['PENDING', 'IN_PROGRESS'] } },
         orderBy: { createdAt: 'desc' },
       }),
+      prisma.order.findMany({
+        where: { ...scope, status: { in: ['ACTIVE', 'HELD'] } },
+        orderBy: { createdAt: 'desc' }, take: 25,
+      }),
     ]);
 
-    res.json({ medications, investigations, nursingTasks: tasks });
+    res.json({ medications, investigations, nursingTasks: tasks, standingOrders });
   } catch (e) { next(e); }
 });
 

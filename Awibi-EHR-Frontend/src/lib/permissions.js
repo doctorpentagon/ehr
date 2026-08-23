@@ -6,7 +6,7 @@ export const PERMISSIONS = {
   // Awibi platform operators never inherit a hospital's clinical permissions.
   // The backend tenant middleware enforces the same boundary independently.
   SUPER_ADMIN: { platform:1, settings:1, support:1 },
-  ADMIN:       { overview:1, patients:1, cases:1, appointments:1, lab:1, departments:1, staff:1, affiliates:1, billing:1, subscription:1, reports:1, settings:1, admissions:1, beds:1, orders:1, support:1, patient_demographics_write:1,
+  ADMIN:       { overview:1, patients:1, cases:1, appointments:1, lab:1, departments:1, staff:1, affiliates:1, billing:1, subscription:1, reports:1, settings:1, admissions:1, beds:1, orders:1, pharmacy:1, inventory_write:1, support:1, patient_demographics_write:1,
                  nursing:1, monitoring:1, drug_admin:1, handover:1, growth:1, bookings:1, emergency:1, emergency_write:1, households:1 },
   RECORDS:     { overview:1, patients:1, appointments:1, settings:1, support:1, patient_demographics_write:1, bookings:1, emergency:1, emergency_write:1, households:1 },
   CLINICIAN:   { overview:1, settings:1, support:1 },
@@ -22,7 +22,7 @@ const SUB_ROLE_EXTRAS = {
   // person who decides they are fit to leave — beds never came free.
   DOCTOR:     { patients:1, cases:1, appointments:1, lab:1, diagnostic_order:1, reports:1, prescriptions:1, orders:1, vitals_write:1, clinical_write:1, prescriptions_write:1,
                 nursing:1, monitoring:1, monitoring_review:1, drug_admin:1, handover:1, growth:1, growth_write:1,
-                admissions:1, beds:1, emergency:1, emergency_write:1, households:1 },
+                emergency:1, emergency_write:1, households:1 },
   NURSE:      { patients:1, cases:1, appointments:1, lab:1, admissions:1, beds:1, orders:1, vitals:1, vitals_write:1,
                 nursing:1, monitoring:1, monitoring_write:1, drug_admin:1, drug_admin_write:1, handover:1, handover_write:1, growth:1, growth_write:1, emergency:1, emergency_write:1 },
   LAB:        { lab:1, diagnostic_process:1, transfer:1 },
@@ -32,7 +32,7 @@ const SUB_ROLE_EXTRAS = {
   CHEMICAL_PATHOLOGIST: { lab:1, diagnostic_process:1, transfer:1 },
   HISTOPATHOLOGIST: { lab:1, diagnostic_process:1, transfer:1 },
   MICROBIOLOGIST: { lab:1, diagnostic_process:1, transfer:1 },
-  PHARMACIST: { patients:1, prescriptions:1, billing:1 },
+  PHARMACIST: { patients:1, prescriptions:1, pharmacy:1, pharmacy_write:1, inventory_write:1, billing:1 },
 };
 
 export function can(role, subRole, module) {
@@ -54,13 +54,13 @@ export const NAV_ITEMS = [
   { key: 'appointments', label: 'Appointments',     icon: 'Calendar',        path: '/dashboard/appointments', section: 'Patient Access' },
   // "Cases" matches the clinical language used in the designs and on the ward.
   { key: 'cases',        label: 'Cases',            icon: 'FileText',        path: '/dashboard/cases',        section: 'Clinical' },
+  { key: 'prescriptions',label: 'Orders & prescriptions', icon: 'ClipboardPlus', path: '/dashboard/orders',    section: 'Clinical' },
   // Sits after Cases: a clinician reaches for a score or a drip rate while
   // they are in the middle of an encounter, not as a separate errand.
   // key:null means every signed-in role sees it — a nurse checking a dose needs
   // it as much as a consultant does. Marked PRO because it is the flagship.
   { key: null,           label: 'Scout',            icon: 'Compass',         path: '/dashboard/scout',        section: 'Clinical', badge: 'PRO', featured: true },
   { key: 'lab',          label: 'Diagnostics',      icon: 'FlaskConical',    path: '/dashboard/lab',          section: 'Clinical' },
-  { key: 'admissions',   label: 'Admissions',       icon: 'BedDouble',       path: '/dashboard/admissions',   section: 'Clinical' },
   { key: 'emergency',    label: 'Emergency intake', icon: 'AlertTriangle',   path: '/dashboard/emergency',    section: 'Patient Access' },
   { key: 'bookings',     label: 'Booking requests', icon: 'CalendarCheck',   path: '/dashboard/bookings',     section: 'Patient Access' },
   { key: 'patients',     label: 'Enquiries',        icon: 'MessageSquare',   path: '/dashboard/inquiries',    section: 'Patient Access' },
@@ -71,6 +71,10 @@ export const NAV_ITEMS = [
   // The worklist answers "what is due now"; standing orders answer "what was
   // instructed and is it actually happening". Different questions, different screens.
   { key: 'orders',       label: 'Standing orders',  icon: 'ClipboardCheck',  path: '/dashboard/nursing/orders',     section: 'Nursing' },
+  // The doctor requests admission; nursing allocates the ward/bed and records
+  // the physical admission. Keeping this here makes that ownership explicit.
+  { key: 'admissions',   label: 'Admissions & beds', icon: 'BedDouble',      path: '/dashboard/admissions',   section: 'Nursing' },
+  { key: 'pharmacy',     label: 'Dispensing & stock', icon: 'Package',       path: '/dashboard/pharmacy',     section: 'Pharmacy' },
   // Every member of staff can message colleagues — a nurse who cannot tell a
   // doctor something is the problem this solves, so there is no gating key.
   { key: null,           label: 'Messages',         icon: 'MessageCircle',   path: '/dashboard/messages',     section: 'Clinical' },

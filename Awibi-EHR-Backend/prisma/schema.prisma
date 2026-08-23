@@ -528,6 +528,7 @@ model Prescription {
 
   patient         Patient              @relation(fields: [patientId], references: [id])
   administrations DrugAdministration[]
+  dispenses       Dispense[]
 }
 
 model Appointment {
@@ -1182,13 +1183,45 @@ model DrugCatalogue {
   defaultFrequency String?
   category         String?
   unitPrice        Decimal   @default(0) @db.Decimal(12, 2)
+  stockOnHand      Float     @default(0)
+  reorderLevel     Float     @default(0)
+  unitLabel        String?
+  nextExpiryDate   DateTime? @db.Date
   isControlled     Boolean   @default(false)
   isActive         Boolean   @default(true)
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
+  dispenses Dispense[]
+
   @@unique([facilityId, name, strength])
   @@index([facilityId, isActive])
+}
+
+/// One auditable issue of medicine from facility stock to a patient.
+/// Repeats and partial fills remain separate events instead of overwriting the
+/// original prescription or pretending every prescription was filled once.
+model Dispense {
+  id                String   @id @default(uuid()) @db.Uuid
+  facilityId        String   @db.Uuid
+  prescriptionId    String   @db.Uuid
+  patientId         String   @db.Uuid
+  drugCatalogueId   String?  @db.Uuid
+  quantity          Float
+  unit              String?
+  unitPrice         Decimal  @default(0) @db.Decimal(12, 2)
+  amount            Decimal  @default(0) @db.Decimal(12, 2)
+  dispensedById     String   @db.Uuid
+  notes             String?
+  dispensedAt       DateTime @default(now())
+  createdAt         DateTime @default(now())
+
+  prescription  Prescription  @relation(fields: [prescriptionId], references: [id])
+  drugCatalogue DrugCatalogue? @relation(fields: [drugCatalogueId], references: [id])
+
+  @@index([facilityId, dispensedAt])
+  @@index([prescriptionId, dispensedAt])
+  @@index([patientId, dispensedAt])
 }
 
 enum NursingTaskStatus {

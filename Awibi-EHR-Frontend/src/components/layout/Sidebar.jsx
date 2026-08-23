@@ -9,7 +9,7 @@ import {
   IconBuildingSkyscraper, IconLock, IconLayoutDashboard,
   IconActivityHeartbeat, IconPill, IconClipboardList,
   IconAlertTriangle, IconCalendarCheck, IconListCheck, IconUsersGroup, IconShieldCheck,
-  IconCompass, IconMessageCircle, IconMessage, IconClipboardCheck, IconHash,
+  IconCompass, IconMessageCircle, IconMessage, IconClipboardCheck, IconClipboardPlus, IconPackage, IconHash,
 } from '@tabler/icons-react';
 import { logout } from '@/store/authSlice';
 import { cn } from '@/lib/utils';
@@ -45,10 +45,12 @@ const ICON_MAP = {
   MessageCircle:      IconMessageCircle,
   MessageSquare:      IconMessage,
   ClipboardCheck:     IconClipboardCheck,
+  ClipboardPlus:      IconClipboardPlus,
+  Package:            IconPackage,
   Hash:               IconHash,
 };
 
-const SECTIONS = ['General', 'Patient Access', 'Clinical', 'Nursing', 'Admin', 'Platform', 'System'];
+const SECTIONS = ['General', 'Patient Access', 'Clinical', 'Nursing', 'Pharmacy', 'Admin', 'Platform', 'System'];
 
 function NavItem({ item, allowed, onClose, collapsed }) {
   const Icon = ICON_MAP[item.icon] || IconHome;

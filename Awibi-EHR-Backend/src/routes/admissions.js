@@ -249,6 +249,33 @@ router.put('/beds/:id/status', bedStatus, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/**
+ * Medical admission decisions waiting for the ward team.
+ *
+ * The doctor creates a normal audited order with a workflow marker. Nursing
+ * turns that decision into a physical admission only after confirming the
+ * patient and allocating a real bed. We deliberately reuse Order rather than
+ * maintaining an unaudited second task system.
+ */
+router.get('/requests', auth, async (req, res, next) => {
+  try {
+    const candidates = await prisma.order.findMany({
+      where: {
+        facilityId: req.ctx.facilityId,
+        type: 'TREATMENT',
+        status: { in: ['ACTIVE', 'HELD'] },
+      },
+      orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
+      include: {
+        patient: { select: { id: true, firstName: true, lastName: true, universalPatientId: true, mrn: true, gender: true, dateOfBirth: true } },
+      },
+      take: 100,
+    });
+    const requests = candidates.filter((order) => order.details?.workflow === 'ADMISSION_REQUEST');
+    res.json({ requests, total: requests.length });
+  } catch (e) { next(e); }
+});
+
 router.get('/', auth, async (req, res, next) => {
   try {
     const { status } = req.query;
@@ -269,7 +296,7 @@ router.get('/', auth, async (req, res, next) => {
 
 router.post('/', auth, async (req, res, next) => {
   try {
-    const { patientId, bedId, caseId, diagnosis, notes } = req.body;
+    const { patientId, bedId, caseId, diagnosis, notes, orderId } = req.body;
     if (!patientId) return res.status(400).json({ error: 'patientId required' });
     await requireTenantPatient(req.ctx.facilityId, patientId);
     if (bedId) {
@@ -277,6 +304,15 @@ router.post('/', auth, async (req, res, next) => {
       if (bed.status !== 'AVAILABLE') return res.status(409).json({ error: 'Bed is not available' });
     }
     if (caseId) await requireTenantCase(req.ctx.facilityId, caseId, patientId);
+    let admissionOrder = null;
+    if (orderId) {
+      admissionOrder = await prisma.order.findFirst({
+        where: { id: orderId, facilityId: req.ctx.facilityId, patientId, type: 'TREATMENT', status: { in: ['ACTIVE', 'HELD'] } },
+      });
+      if (!admissionOrder || admissionOrder.details?.workflow !== 'ADMISSION_REQUEST') {
+        return res.status(404).json({ error: 'Active admission request not found for this patient' });
+      }
+    }
     const a = await prisma.$transaction(async (tx) => {
       const activeAdmission = await tx.admission.findFirst({
         where: { facilityId: req.ctx.facilityId, patientId, status: 'ADMITTED' },
@@ -302,8 +338,19 @@ router.post('/', auth, async (req, res, next) => {
         },
       });
       await tx.patient.update({ where: { id: patientId }, data: { status: 'IN_PATIENT' } });
+      if (admissionOrder) {
+        await tx.order.update({ where: { id: admissionOrder.id }, data: { status: 'COMPLETED' } });
+      }
       return admission;
     });
+    prisma.auditLog.create({
+      data: {
+        facilityId: req.ctx.facilityId, userId: req.ctx.userId,
+        action: orderId ? 'admission.request.accept' : 'admission.create',
+        resource: 'Admission', resourceId: a.id,
+        reason: orderId ? `Nursing completed admission order ${orderId}` : 'Nursing admission', ip: req.ip,
+      },
+    }).catch(() => {});
     res.status(201).json(a);
   } catch (e) { next(e); }
 });

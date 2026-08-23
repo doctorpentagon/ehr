@@ -43,6 +43,9 @@ test('role permissions separate administration and clinical access', () => {
   assert.equal(can('CLINICIAN', 'DOCTOR', 'prescriptions_write'), true);
   assert.equal(can('CLINICIAN', 'NURSE', 'vitals_write'), true);
   assert.equal(can('CLINICIAN', 'NURSE', 'prescriptions_write'), false);
+  assert.equal(can('CLINICIAN', 'DOCTOR', 'admissions'), false);
+  assert.equal(can('CLINICIAN', 'PHARMACIST', 'pharmacy'), true);
+  assert.equal(can('CLINICIAN', 'PHARMACIST', 'pharmacy_write'), true);
   assert.equal(can('SUPER_ADMIN', null, 'platform'), true);
   assert.equal(can('SUPER_ADMIN', null, 'patients'), false);
   assert.equal(can('SUPER_ADMIN', null, 'cases'), false);
@@ -380,7 +383,7 @@ test('the frontend and backend permission maps agree', () => {
 
   const roles = [
     ['SUPER_ADMIN', null], ['ADMIN', null], ['RECORDS', null],
-    ['CLINICIAN', 'DOCTOR'], ['CLINICIAN', 'NURSE'], ['CLINICIAN', 'LAB'],
+    ['CLINICIAN', 'DOCTOR'], ['CLINICIAN', 'NURSE'], ['CLINICIAN', 'LAB'], ['CLINICIAN', 'PHARMACIST'],
   ];
   // Every module the sidebar gates on, plus the write permissions that decide
   // whether a screen shows an action button.
@@ -429,7 +432,7 @@ test('every sidebar item points at a module the backend knows', () => {
     .filter((item) => item.key && !frontendOnly.has(item.key))
     .filter((item) => ![
       ['SUPER_ADMIN', null], ['ADMIN', null], ['RECORDS', null],
-      ['CLINICIAN', 'DOCTOR'], ['CLINICIAN', 'NURSE'], ['CLINICIAN', 'LAB'],
+      ['CLINICIAN', 'DOCTOR'], ['CLINICIAN', 'NURSE'], ['CLINICIAN', 'LAB'], ['CLINICIAN', 'PHARMACIST'],
     ].some(([r, s]) => can(r, s, item.key)))
     .map((item) => `${item.label} (${item.key})`)];
 

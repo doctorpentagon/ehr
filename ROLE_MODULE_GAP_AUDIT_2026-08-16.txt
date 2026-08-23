@@ -60,16 +60,16 @@ PHARMACY — HONEST CURRENT STATE
 
 [x] 43. Doctor prescriptions are structured and tied to patient, encounter, prescriber and server time.
 [x] 44. Nursing medication-administration records exist separately from prescribing.
-[~] 45. A pharmacist demo role/login and honest placeholder dashboard exist, but not a pharmacy workbench.
-[ ] 46. Facility drug formulary/product master: generic/brand, strength, dose form, pack size, route, barcode and regulatory identifiers.
-[ ] 47. Store/location/bin inventory with opening balance, receipts, issues, adjustments and immutable stock ledger.
-[ ] 48. Batch/lot, expiry, manufacturer/supplier, acquisition cost and selling price.
+[x] 45. A dedicated pharmacist demo role/login and working pharmacy dashboard/workbench exist.
+[~] 46. Facility formulary covers name/generic, strength, dose form, route, category, price and controlled flag; pack/barcode/regulatory identifiers remain.
+[~] 47. Current stock, reorder level and immutable patient-linked dispense issues exist; multi-store/bin receipts and adjustment ledger remain.
+[~] 48. Nearest expiry and selling price exist; batch/lot, manufacturer/supplier and acquisition-cost history remain.
 [ ] 49. Purchase requisition, approval, purchase order, goods receipt, invoice and supplier-return lifecycle.
-[ ] 50. Prescription verification queue with allergy/interaction/duplication/dose checks and documented pharmacist intervention.
-[ ] 51. Dispense, partial dispense, owing balance, substitution approval, cancellation, patient return and wastage.
-[ ] 52. Every dispense must link patient ID, prescription, pharmacist, quantity, batch, amount, payer and timestamps.
-[ ] 53. Controlled-drug register, dual checks, witnessed destruction and statutory reports.
-[ ] 54. FEFO picking, low-stock/reorder, near-expiry, out-of-stock and recall/quarantine alerts.
+[~] 50. Prescription verification queue is working; licensed allergy/interaction/duplication/dose intelligence and structured interventions remain.
+[~] 51. Full and partial dispensing work; owing balance, substitution approval, returns and wastage remain.
+[~] 52. Dispense links patient ID, prescription, pharmacist, quantity, amount and timestamps; batch and payer links remain.
+[~] 53. Controlled issues require a register/witness note; dual checks, witnessed destruction and statutory reports remain.
+[~] 54. Low-stock/reorder and nearest-expiry visibility work; batch FEFO, recall and quarantine remain.
 [ ] 55. Cash/HMO/NHIA billing integration, price history, discounts/approvals, receipts and refund reconciliation.
 [ ] 56. Pharmaceutical care plan, drug-therapy-problem tracker, adherence/adverse-effect follow-up and clinician messaging.
 [ ] 57. Stock count/cycle count, variance approval, audit export and branch transfer.
@@ -100,7 +100,7 @@ EQUIPMENT / INSTRUMENT / ASSET REGISTER — NOT YET BUILT
 RELEASE ORDER
 
 [ ] 75. First finish and test the local provenance migration and retrospective-entry E2E evidence.
-[ ] 76. Then implement the pharmacy core ledger + verify/dispense loop as its own bounded module.
+[x] 76. Pharmacy core queue, dispense events and atomic stock decrement implemented as a bounded module; advanced controls remain above.
 [ ] 77. Then implement Records work queues and asset/equipment register with new granular permissions.
 [ ] 78. Then complete diagnostic accession/QC/PACS/device integrations with named clinical owners.
 [ ] 79. Do not claim complete pharmacy, LIS/PACS, equipment management or country readiness until their acceptance tests and operating procedures pass.

@@ -7,13 +7,17 @@ import { Calendar, FlaskConical, AlertCircle, MessageCircle } from 'lucide-react
 import { format } from 'date-fns';
 import { logout } from '@/store/authSlice';
 import api from '@/lib/api';
-import { roleLabel } from '@/lib/permissions';
+import { can, roleLabel } from '@/lib/permissions';
 
 export default function TopBar({ onMenuClick, onSidebarToggle, sidebarCollapsed }) {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const { user } = useSelector((s) => s.auth);
   const isPlatformOperator = user?.role === 'SUPER_ADMIN';
+  const role = user?.role?.toUpperCase() || '';
+  const subRole = user?.subRole?.toUpperCase() || '';
+  const maySeeAppointments = can(role, subRole, 'appointments');
+  const maySeeDiagnostics = can(role, subRole, 'lab');
   const [dropOpen, setDropOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [searchVal, setSearchVal] = useState('');
@@ -25,14 +29,14 @@ export default function TopBar({ onMenuClick, onSidebarToggle, sidebarCollapsed 
     queryKey: ['notif-appts'],
     queryFn: () => api.get('/appointments', { params: { date: today, limit: 5 } }).then(r => r.data),
     staleTime: 60000,
-    enabled: !isPlatformOperator,
+    enabled: !isPlatformOperator && maySeeAppointments,
   });
 
   const { data: labData } = useQuery({
     queryKey: ['notif-lab'],
     queryFn: () => api.get('/lab', { params: { status: 'PENDING', limit: 5 } }).then(r => r.data),
     staleTime: 60000,
-    enabled: !isPlatformOperator,
+    enabled: !isPlatformOperator && maySeeDiagnostics,
   });
 
   // Polled rather than pushed. A colleague waiting on an answer should not have

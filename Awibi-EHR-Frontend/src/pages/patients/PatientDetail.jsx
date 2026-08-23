@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronLeft, Plus, AlertTriangle, Heart, Activity, Pill,
-  FlaskConical, FileText, Upload, Printer, X, Edit2, Link2, Unlink,
+  FlaskConical, FileText, Upload, Printer, X, Edit2, Link2, Unlink, Mail, MessageCircle,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -133,6 +133,25 @@ export default function PatientDetail() {
                     </button>
                   )}
                 </div>
+                {(patient.phone || patient.email) && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-medium text-gray-500">Contact patient</span>
+                    {patient.phone && (
+                      <a href={`https://wa.me/${String(patient.phone).replace(/\D/g, '').replace(/^0/, '234')}`} target="_blank" rel="noreferrer"
+                        aria-label={`Open WhatsApp for ${patient.firstName}`} title="Open WhatsApp — do not include clinical details without consent"
+                        className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-green-200 bg-green-50 px-3 text-xs font-semibold text-green-800">
+                        <MessageCircle size={15} /> WhatsApp
+                      </a>
+                    )}
+                    {patient.email && (
+                      <a href={`mailto:${patient.email}`} aria-label={`Email ${patient.firstName}`} title="Open email — follow facility consent and privacy policy"
+                        className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-800">
+                        <Mail size={15} /> Email
+                      </a>
+                    )}
+                    <span className="text-[11px] text-gray-400">External contact; avoid clinical details unless consent and facility policy permit it.</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -204,7 +223,6 @@ export default function PatientDetail() {
         <ClinicalActionModal
           patient={patient}
           onClose={() => setClinicalActionOpen(false)}
-          onMedication={() => { setClinicalActionOpen(false); setRxOpen(true); }}
           onNavigate={(path) => { setClinicalActionOpen(false); navigate(path); }}
         />
       )}
@@ -224,11 +242,9 @@ function Info({ label, value }) {
   );
 }
 
-function ClinicalActionModal({ patient, onClose, onMedication, onNavigate }) {
+function ClinicalActionModal({ patient, onClose, onNavigate }) {
   const actions = [
-    { label: 'Medication', detail: 'Prescribe a medicine', Icon: Pill, onClick: onMedication },
-    { label: 'Diagnostics', detail: 'Laboratory, imaging or ECG', Icon: FlaskConical, onClick: () => onNavigate(`/dashboard/lab?patientId=${patient.id}`) },
-    { label: 'Nursing / monitoring', detail: 'Bedside care or observation order', Icon: Activity, onClick: () => onNavigate(`/dashboard/nursing/orders?patientId=${patient.id}&new=1`) },
+    { label: 'Orders & prescriptions', detail: 'Medicine, diagnostics, nursing monitoring or admission', Icon: Pill, onClick: () => onNavigate(`/dashboard/orders?patientId=${patient.id}`) },
     { label: 'Appointment', detail: 'Book a clinic review', Icon: FileText, onClick: () => onNavigate(`/dashboard/appointments?patientId=${patient.id}`) },
     { label: 'New encounter', detail: 'Document consultation and combined orders', Icon: Plus, onClick: () => onNavigate(`/dashboard/cases/new?patientId=${patient.id}`) },
   ];

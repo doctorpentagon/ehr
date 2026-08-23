@@ -452,7 +452,7 @@ router.post('/:id/link', write, async (req, res, next) => {
       const scope = { patientId: tempId };
       const to = { patientId: target.id };
 
-      const [vitals, labs, docs, cases, prescriptions, monitoring, drugs, growth, handovers, invoices, appointments,
+      const [vitals, labs, docs, cases, prescriptions, dispenses, monitoring, drugs, growth, handovers, invoices, appointments,
         orders, resuscitations] =
         await Promise.all([
           tx.vitals.updateMany({ where: scope, data: to }),
@@ -460,6 +460,7 @@ router.post('/:id/link', write, async (req, res, next) => {
           tx.patientDocument.updateMany({ where: scope, data: to }),
           tx.case.updateMany({ where: scope, data: to }),
           tx.prescription.updateMany({ where: scope, data: to }),
+          tx.dispense.updateMany({ where: scope, data: to }),
           tx.monitoringSheet.updateMany({ where: scope, data: to }),
           tx.drugAdministration.updateMany({ where: scope, data: to }),
           tx.growthMeasurement.updateMany({ where: scope, data: to }),
@@ -497,7 +498,7 @@ router.post('/:id/link', write, async (req, res, next) => {
 
       return {
         vitals: vitals.count, labRequests: labs.count, documents: docs.count, cases: cases.count,
-        prescriptions: prescriptions.count, monitoringSheets: monitoring.count,
+        prescriptions: prescriptions.count, dispenses: dispenses.count, monitoringSheets: monitoring.count,
         drugAdministrations: drugs.count, growthMeasurements: growth.count,
         handoverNotes: handovers.count, invoices: invoices.count, appointments: appointments.count,
         orders: orders.count, resuscitationEvents: resuscitations.count,

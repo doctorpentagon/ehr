@@ -162,6 +162,22 @@ Recommended radiology flow: clinician `ServiceRequest` → accession/scheduling 
 - [ ] 29. Obtain explicit facility sign-off that all test data are synthetic and no live care depends on the beta.
 - [ ] 30. Push only reviewed source and authored project documentation to the feature branch; exclude runtime folders, credentials, database dumps, raw feedback documents, and copyrighted research material.
 
+## Verified local release evidence — 23 August 2026
+
+- Backend unit: **38/38** passed.
+- Frontend/API contract: **183 distinct calls** resolve across **253 backend routes**.
+- Live API smoke: **364/364** passed.
+- Cross-department workflow loops: **60/60** passed, including doctor prescription → pharmacist dispense/stock decrement and doctor admission request → nurse bed admission/discharge.
+- Clinical closure audit: **38/38** passed.
+- Role audit: **47 offered routes opened** and **65 forbidden routes refused**.
+- Exact-record tenant isolation: **6/6 cross-facility probes refused**.
+- Frontend unit: **8/8** passed; production build completed after checking **103 imports**, **51 routes**, and transforming **9,148 modules**.
+- In-app browser: Doctor ordering, doctor admission refusal, nurse-owned Admissions & Beds, pharmacist queue/inventory, and diagnostic worklist were opened successfully with the corresponding demo roles.
+
+This evidence supports a controlled synthetic-data beta. It does not close the BLOCKER or EXTERNAL items above.
+
+---
+
 ## 10. Standards baseline for the design
 
 - Nigeria Data Protection Act 2023: <https://ndpc.gov.ng/download/nigeria-data-protection-act-2023>

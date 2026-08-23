@@ -71,6 +71,8 @@ import MonitoringSheet from './pages/nursing/MonitoringSheet';
 import DrugChart from './pages/nursing/DrugChart';
 import Handover from './pages/nursing/Handover';
 import Orders from './pages/nursing/Orders';
+import ClinicalOrders from './pages/orders/ClinicalOrders';
+import Pharmacy from './pages/pharmacy/Pharmacy';
 import EmergencyBoard from './pages/emergency/EmergencyBoard';
 import PatientMonitoringOverview from './pages/nursing/PatientMonitoringOverview';
 import Departments from './pages/departments/Departments';
@@ -201,7 +203,9 @@ export default function App() {
         <Route path="cases" element={<RoleRoute module="cases"><Cases /></RoleRoute>} />
         <Route path="cases/new" element={<RoleRoute module="cases"><NewEncounter /></RoleRoute>} />
         <Route path="cases/:id" element={<RoleRoute module="cases"><CaseDetail /></RoleRoute>} />
+        <Route path="orders" element={<RoleRoute module="prescriptions"><ClinicalOrders /></RoleRoute>} />
         <Route path="lab" element={<RoleRoute module="lab"><Lab /></RoleRoute>} />
+        <Route path="pharmacy" element={<RoleRoute module="pharmacy"><Pharmacy /></RoleRoute>} />
         <Route path="nursing" element={<RoleRoute module="monitoring"><Monitoring /></RoleRoute>} />
         <Route path="nursing/sheet/:id" element={<RoleRoute module="monitoring"><MonitoringSheet /></RoleRoute>} />
         <Route path="nursing/drug-chart" element={<RoleRoute module="drug_admin"><DrugChart /></RoleRoute>} />

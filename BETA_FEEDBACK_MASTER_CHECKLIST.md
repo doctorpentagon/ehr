@@ -108,8 +108,12 @@ This is the traceable disposition of the two beta Word documents, the two suppli
 - [x] E16. Emergency intake works before identity is known and safely merges into the permanent record.
 - [x] E17. Consultation and monitoring capture the authenticated professional and immutable EHR server time automatically.
 - [x] E18. Retrospective consultation/monitoring preserves separate care time and EHR entry time, requires a reason, displays the professional/time controls, and rejects future times; local Prisma migration and live E2E passed on 23 August 2026.
-- [ ] E19. License and integrate a production drug-interaction/allergy checking knowledge base; current allergy capture is not a complete interaction engine.
-- [ ] E20. Validate WHO paediatric BMI/anthropometry datasets and age/sex z-score presentation under a named paediatric clinical owner.
+- [x] E19. Doctors have a visible Clinical Orders & prescriptions workspace covering medicine, nursing/monitoring, diagnostics and admission requests.
+- [x] E20. Admission requests reach Nursing; nursing owns bed allocation/admission and doctors are refused from direct bed-board operation.
+- [x] E21. Pharmacy demo access, prescription queue, auditable full/partial dispense, patient/pharmacist/quantity/amount timestamps, atomic stock decrement, reorder and nearest-expiry visibility are working.
+- [x] E22. Internal patient-linked urgent messages move directly between staff with unread badges; admin approval is intentionally not inserted into safety-critical communication.
+- [ ] E23. License and integrate a production drug-interaction/allergy checking knowledge base; current allergy capture is not a complete interaction engine.
+- [ ] E24. Validate WHO paediatric BMI/anthropometry datasets and age/sex z-score presentation under a named paediatric clinical owner.
 
 ## Release gate F — privacy, scale, operations, and production
 
@@ -124,7 +128,7 @@ This is the traceable disposition of the two beta Word documents, the two suppli
 - [ ] F9. Complete KMS/HSM, secret rotation, TLS, WAF, backup/restore, disaster recovery, monitoring, and incident response.
 - [ ] F10. Run independent clinical-safety review, penetration test, accessibility audit, load/soak test, and backup-restore exercise.
 - [ ] F11. Validate physical Android/PWA, intermittent-network, low-end device, printer, barcode, scanner, camera, and microphone workflows.
-- [ ] F12. Complete pharmacy inventory/procurement/dispensing controls, attendance/HR integrations, and a citizen patient portal beyond the Identity inbox.
+- [ ] F12. Complete advanced pharmacy batch/lot/FEFO, procurement, recall/quarantine, witnessed controlled-drug, payer and branch-transfer controls; complete attendance/HR integrations and a citizen patient portal beyond the Identity inbox.
 - [ ] F13. Complete on-prem/offline deployment packaging and support procedures for facilities with unreliable internet.
 - [ ] F14. Establish national/continental governance, terminology service, FHIR conformance, facility onboarding, support SLAs, and regional data-residency strategy.
 - [x] F15. Refuse Awibi `SUPER_ADMIN` on every tenant clinical route even when a synthetic demo facility is attached; platform oversight remains on `/v1/platform` only.

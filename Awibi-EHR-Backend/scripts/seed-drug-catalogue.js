@@ -80,7 +80,15 @@ async function main() {
       const existing = await prisma.drugCatalogue.findFirst({
         where: { facilityId: facility.id, name: d.name, strength: d.strength || null },
       });
-      if (existing) { skipped += 1; continue; }
+      if (existing) {
+        if (existing.stockOnHand === 0) {
+          await prisma.drugCatalogue.update({
+            where: { id: existing.id },
+            data: { stockOnHand: 100, reorderLevel: 20, unitLabel: d.form || 'unit' },
+          });
+        }
+        skipped += 1; continue;
+      }
       await prisma.drugCatalogue.create({
         data: {
           facilityId: facility.id,
@@ -93,6 +101,9 @@ async function main() {
           defaultFrequency: d.defaultFrequency || null,
           category: d.category || null,
           unitPrice: d.unitPrice ?? 0,
+          stockOnHand: 100,
+          reorderLevel: 20,
+          unitLabel: d.form || 'unit',
           isControlled: Boolean(d.isControlled),
         },
       });

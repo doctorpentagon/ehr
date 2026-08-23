@@ -30,6 +30,7 @@ const step = (loop, label, passed, detail = '') => {
     nurse: await tk((a) => a.subRole === 'NURSE'),
     doctor: await tk((a) => a.subRole === 'DOCTOR'),
     lab: await tk((a) => a.subRole === 'LAB'),
+    pharmacist: await tk((a) => a.subRole === 'PHARMACIST'),
     records: await tk((a) => a.role === 'RECORDS'),
     admin: await tk((a) => a.role === 'ADMIN' && a.facility.name.includes('UCH')),
   };
@@ -162,8 +163,37 @@ const step = (loop, label, passed, detail = '') => {
     Boolean(result.d?.abnormalFlag) && result.d.abnormalFlag !== 'NORMAL', result.d?.abnormalFlag);
   if (lab.d?.id) cleanup.push(() => call('DELETE', `/lab/${lab.d.id}`, T.doctor));
 
-  // ── 6. Billing: invoice → payment → ledger ───────────────────────────────
-  console.log('\n  6. BILLING');
+  // ── 6. Pharmacy: prescription → issue → stock ledger ────────────────────
+  console.log('\n  6. PHARMACY');
+  const stock = await call('GET', '/orders/pharmacy/inventory', T.pharmacist);
+  const stockItem = stock.d?.items?.find((item) => item.stockOnHand > 2);
+  step('pharmacy', 'the pharmacist can see facility inventory', Boolean(stockItem), `${stock.d?.counts?.total || 0} items`);
+  const rx = await call('POST', '/orders/medications', T.doctor, {
+    patientId: patient.id,
+    medications: [{ drugName: stockItem?.name || 'Paracetamol', dosage: '1 unit', route: 'ORAL', frequency: 'Stat', duration: 'Once' }],
+  });
+  const rxId = rx.d?.medications?.[0]?.id;
+  step('pharmacy', 'a doctor can send a prescription', rx.status === 201 && Boolean(rxId));
+  const pharmacyQueue = await call('GET', '/orders/pharmacy/queue?status=ACTIVE', T.pharmacist);
+  step('pharmacy', 'it reaches the pharmacist queue', pharmacyQueue.d?.prescriptions?.some((item) => item.id === rxId));
+  if (stockItem && rxId) {
+    const issued = await call('POST', `/orders/pharmacy/dispense/${rxId}`, T.pharmacist, {
+      drugCatalogueId: stockItem.id, quantity: 1, unit: stockItem.unitLabel || 'unit', complete: true,
+      notes: stockItem.isControlled ? 'Loop audit witness UCH-STF-100003' : 'Loop audit issue',
+    });
+    step('pharmacy', 'pharmacy records the patient-linked issue and amount', issued.status === 201 && issued.d?.amount >= 0);
+    const stockAfter = await call('GET', `/orders/pharmacy/inventory?search=${encodeURIComponent(stockItem.name)}`, T.pharmacist);
+    const afterItem = stockAfter.d?.items?.find((item) => item.id === stockItem.id);
+    step('pharmacy', 'dispensing decrements stock atomically', afterItem?.stockOnHand === stockItem.stockOnHand - 1, `${stockItem.stockOnHand} → ${afterItem?.stockOnHand}`);
+    cleanup.push(() => call('PUT', `/orders/pharmacy/inventory/${stockItem.id}`, T.admin, {
+      stockOnHand: stockItem.stockOnHand, reorderLevel: stockItem.reorderLevel,
+      unitLabel: stockItem.unitLabel, unitPrice: Number(stockItem.unitPrice), nextExpiryDate: stockItem.nextExpiryDate,
+    }));
+  }
+  if (rxId) cleanup.push(() => call('PUT', `/patients/${patient.id}/prescriptions/${rxId}`, T.doctor, { status: 'CANCELLED' }));
+
+  // ── 7. Billing: invoice → payment → ledger ───────────────────────────────
+  console.log('\n  7. BILLING');
   const inv = await call('POST', '/billing/', T.admin, {
     patientId: patient.id, subtotal: 5000, total: 5000,
     items: [{ description: 'Loop audit', quantity: 1, unitPrice: 5000, amount: 5000 }],
@@ -179,28 +209,37 @@ const step = (loop, label, passed, detail = '') => {
     await fetch(`${B}/billing/${inv.d.id}`, { method: 'DELETE', headers: H(T.admin) });
   });
 
-  // ── 7. Admission: bed → admit → discharge → bed freed ────────────────────
-  console.log('\n  7. ADMISSION');
+  // ── 8. Admission order → nurse → bed → discharge ─────────────────────────
+  console.log('\n  8. ADMISSION');
+  step('admission', 'doctors do not directly operate the bed board', (await call('GET', '/admissions', T.doctor)).status === 403);
+  const admissionOrder = await call('POST', '/orders/standing', T.doctor, {
+    patientId: patient.id, type: 'TREATMENT', name: 'Admission requested', goal: 'Loop audit diagnosis',
+    instructions: 'Admit for observation', priority: 'URGENT',
+    details: { workflow: 'ADMISSION_REQUEST', diagnosis: 'Loop audit diagnosis', reason: 'Admit for observation', bedType: 'GENERAL' },
+  });
+  step('admission', 'a doctor can send an admission order', admissionOrder.status === 201);
+  const admissionRequests = await call('GET', '/admissions/requests', T.nurse);
+  step('admission', 'the request reaches nursing', admissionRequests.d?.requests?.some((item) => item.id === admissionOrder.d?.id));
   const beds = await call('GET', '/admissions/beds?status=AVAILABLE', T.nurse);
   const bed = beds.d?.beds?.[0];
   step('admission', 'there is an available bed to admit to', Boolean(bed), `${beds.d?.counts?.available} free`);
   if (bed) {
     const adm = await call('POST', '/admissions', T.nurse, {
-      patientId: patient.id, bedId: bed.id, diagnosis: 'Loop audit',
+      patientId: patient.id, bedId: bed.id, diagnosis: 'Loop audit', orderId: admissionOrder.d?.id,
     });
     step('admission', 'a patient can be admitted', adm.status === 201, `HTTP ${adm.status}`);
     const after = await call('GET', `/admissions/beds?ward=${encodeURIComponent(bed.ward || '')}`, T.nurse);
     const nowBed = after.d?.beds?.find((b) => b.id === bed.id);
     step('admission', 'the bed becomes occupied', nowBed?.status === 'OCCUPIED', nowBed?.status);
-    const disc = await call('PUT', `/admissions/${adm.d?.id}/discharge`, T.doctor, { outcome: 'Recovered' });
+    const disc = await call('PUT', `/admissions/${adm.d?.id}/discharge`, T.nurse, { outcome: 'Recovered' });
     step('admission', 'the patient can be discharged', disc.status === 200, `HTTP ${disc.status}`);
     const freed = await call('GET', `/admissions/beds?ward=${encodeURIComponent(bed.ward || '')}`, T.nurse);
     const freedBed = freed.d?.beds?.find((b) => b.id === bed.id);
     step('admission', 'discharge frees the bed', freedBed?.status !== 'OCCUPIED', freedBed?.status);
   }
 
-  // ── 8. Public enquiry → records queue → registration ─────────────────────
-  console.log('\n  8. PUBLIC ENQUIRY');
+  // ── 9. Public enquiry → records queue → registration ─────────────────────
+  console.log('\n  9. PUBLIC ENQUIRY');
   const slug = (await (await fetch(`${B}/public/clinics`)).json()).clinics?.find((c) => c.slug?.includes('uch'))?.slug;
   const ip = `2001:db8:a0d:${Date.now().toString(16)}::1`;
   const enq = await fetch(`${B}/public/clinic/${slug}/inquiry`, {
@@ -220,8 +259,8 @@ const step = (loop, label, passed, detail = '') => {
     if (mine?.id) await call('PUT', `/inquiries/${mine.id}/status`, T.records, { status: 'CLOSED' });
   });
 
-  // ── 9. Emergency: intake → resuscitation → merge ─────────────────────────
-  console.log('\n  9. EMERGENCY');
+  // ── 10. Emergency: intake → resuscitation → merge ────────────────────────
+  console.log('\n 10. EMERGENCY');
   const em = await call('POST', '/emergency', T.records, {
     presentingName: 'Loop Unknown', triage: 'RESUSCITATION', chiefComplaint: 'Collapse',
   });
@@ -244,8 +283,8 @@ const step = (loop, label, passed, detail = '') => {
     }
   });
 
-  // ── 10. Messaging ────────────────────────────────────────────────────────
-  console.log('\n 10. MESSAGING');
+  // ── 11. Messaging ────────────────────────────────────────────────────────
+  console.log('\n 11. MESSAGING');
   const colleagues = (await call('GET', '/messages/recipients', T.nurse)).d?.recipients || [];
   const doc = colleagues.find((c) => c.subRole === 'DOCTOR');
   const msg = await call('POST', '/messages', T.nurse, {
