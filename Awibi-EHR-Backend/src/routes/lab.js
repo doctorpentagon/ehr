@@ -5,9 +5,29 @@ const { authenticate } = require('../middleware/auth');
 const { tenant } = require('../middleware/tenant');
 const { requirePermission } = require('../middleware/rbac');
 const { requireTenantPatient, requireTenantCase } = require('../utils/tenantRecords');
-const { canTransition, transitionError, interpretResult } = require('../utils/diagnostics');
+const { TRANSITIONS, canTransition, transitionError, interpretResult } = require('../utils/diagnostics');
+const { can } = require('../utils/permissions');
 
 const auth = [authenticate, tenant, requirePermission('lab')];
+const orderAuth = [authenticate, tenant, requirePermission('diagnostic_order')];
+const processAuth = [authenticate, tenant, requirePermission('diagnostic_process')];
+const deliveryAuth = [authenticate, tenant, (req, res, next) => {
+  if (can(req.ctx.role, req.ctx.subRole, 'diagnostic_process') || can(req.ctx.role, req.ctx.subRole, 'clinical_write')) return next();
+  return res.status(403).json({ error: 'Only the responsible diagnostic professional or doctor can release a result to the patient' });
+}];
+
+const DISCIPLINE_SCOPE = {
+  RADIOLOGIST: { testType: { in: ['IMAGING', 'ECG'] } },
+  RADIOGRAPHER: { testType: 'IMAGING' },
+  HAEMATOLOGIST: { diagnosticDiscipline: { in: ['Haematology', 'Hematology'] } },
+  CHEMICAL_PATHOLOGIST: { diagnosticDiscipline: { in: ['Chemistry', 'Chemical Pathology'] } },
+  HISTOPATHOLOGIST: { diagnosticDiscipline: { in: ['Histopathology', 'Morbid Anatomy', 'Anatomical Pathology'] } },
+  MICROBIOLOGIST: { diagnosticDiscipline: { in: ['Microbiology', 'Parasitology', 'Serology'] } },
+};
+
+function scopedQueueWhere(req, base = {}) {
+  return { ...base, ...(DISCIPLINE_SCOPE[req.ctx?.subRole] || {}) };
+}
 
 const IDENTITY_URL = process.env.IDENTITY_BACKEND_URL || 'http://localhost:8001';
 const SHARED_SECRET = process.env.AWIBI_SHARED_SECRET;
@@ -15,20 +35,32 @@ const SHARED_SECRET = process.env.AWIBI_SHARED_SECRET;
 router.get('/', auth, async (req, res, next) => {
   try {
     const { status, patientId, testType, search, page = 1, limit = 20 } = req.query;
-    const where = { facilityId: req.ctx.facilityId };
+    let where = scopedQueueWhere(req, { facilityId: req.ctx.facilityId });
     // Treat an explicit "ALL" as no filter; matching it against the enum
     // literally makes the list silently return nothing.
     if (status && status !== 'ALL') where.status = status;
     if (patientId) where.patientId = patientId;
     if (testType) where.testType = testType;
-    if (search) where.testName = { contains: search, mode: 'insensitive' };
+    if (search) {
+      where = {
+        ...where,
+        OR: [
+          { testName: { contains: search, mode: 'insensitive' } },
+          { diagnosticDiscipline: { contains: search, mode: 'insensitive' } },
+          { patient: { is: { firstName: { contains: search, mode: 'insensitive' } } } },
+          { patient: { is: { lastName: { contains: search, mode: 'insensitive' } } } },
+          { patient: { is: { universalPatientId: { contains: search, mode: 'insensitive' } } } },
+          { patient: { is: { mrn: { contains: search, mode: 'insensitive' } } } },
+        ],
+      };
+    }
     const skip = (Number(page) - 1) * Number(limit);
     const [total, requests] = await prisma.$transaction([
       prisma.labRequest.count({ where }),
       prisma.labRequest.findMany({
         where, skip, take: Number(limit), orderBy: { createdAt: 'desc' },
         include: {
-          patient: { select: { id: true, firstName: true, lastName: true, universalPatientId: true, mrn: true } },
+          patient: { select: { id: true, firstName: true, lastName: true, universalPatientId: true, mrn: true, dateOfBirth: true, gender: true } },
           requestedBy: { select: { id: true, firstName: true, lastName: true } },
         },
       }),
@@ -40,11 +72,12 @@ router.get('/', auth, async (req, res, next) => {
 router.get('/stats', auth, async (req, res, next) => {
   try {
     const fid = req.ctx.facilityId;
+    const queue = (status) => scopedQueueWhere(req, { facilityId: fid, status });
     const [pending, inProgress, completed, cancelled] = await prisma.$transaction([
-      prisma.labRequest.count({ where: { facilityId: fid, status: 'PENDING' } }),
-      prisma.labRequest.count({ where: { facilityId: fid, status: 'IN_PROGRESS' } }),
-      prisma.labRequest.count({ where: { facilityId: fid, status: 'COMPLETED' } }),
-      prisma.labRequest.count({ where: { facilityId: fid, status: 'CANCELLED' } }),
+      prisma.labRequest.count({ where: queue('PENDING') }),
+      prisma.labRequest.count({ where: queue('IN_PROGRESS') }),
+      prisma.labRequest.count({ where: scopedQueueWhere(req, { facilityId: fid, status: { in: ['PRELIMINARY', 'COMPLETED', 'CORRECTED'] } }) }),
+      prisma.labRequest.count({ where: queue('CANCELLED') }),
     ]);
     res.json({ pending, inProgress, completed, cancelled, total: pending + inProgress + completed + cancelled });
   } catch (e) { next(e); }
@@ -66,7 +99,7 @@ router.get('/catalogue', auth, async (req, res, next) => {
 router.get('/:id', auth, async (req, res, next) => {
   try {
     const r = await prisma.labRequest.findFirst({
-      where: { id: req.params.id, facilityId: req.ctx.facilityId },
+      where: scopedQueueWhere(req, { id: req.params.id, facilityId: req.ctx.facilityId }),
       include: {
         patient: true,
         requestedBy: { select: { id: true, firstName: true, lastName: true } },
@@ -77,11 +110,11 @@ router.get('/:id', auth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-router.post('/', auth, async (req, res, next) => {
+router.post('/', orderAuth, async (req, res, next) => {
   try {
     const { patientId, testName, testType, priority, caseId, notes, catalogueTestId, tests } = req.body;
     if (!patientId) return res.status(400).json({ error: 'patientId required' });
-    await requireTenantPatient(req.ctx.facilityId, patientId);
+    const patient = await requireTenantPatient(req.ctx.facilityId, patientId);
     if (caseId) await requireTenantCase(req.ctx.facilityId, caseId, patientId);
 
     // Doctors order several investigations at once; accept a batch or a single test.
@@ -112,6 +145,10 @@ router.post('/', auth, async (req, res, next) => {
           // Snapshot the catalogue reference range so a later catalogue edit
           // never retro-changes how an existing result was interpreted.
           catalogueTestId: cat?.id || null,
+          patientDateOfBirthAtOrder: patient.dateOfBirth,
+          patientGenderAtOrder: patient.gender,
+          diagnosticDiscipline: cat?.category || null,
+          requestOrigin: 'CLINICIAN_ORDER',
           resultUnit: cat?.unit || null,
           referenceLow: cat?.referenceLow ?? null,
           referenceHigh: cat?.referenceHigh ?? null,
@@ -175,14 +212,18 @@ router.put('/catalogue/:id', [authenticate, tenant, requirePermission('settings'
  * Results go through PUT /:id/result, which interprets them against the range.
  */
 const RESULT_FIELDS = [
+  'status', 'result', 'resultFileUrl', 'aiDraft', 'aiDraftReviewed',
   'resultValue', 'resultUnit', 'referenceLow', 'referenceHigh',
   'abnormalFlag', 'isCritical', 'criticalAckById', 'criticalAckAt',
-  'verifiedById', 'verifiedAt', 'reviewedByDoctorAt',
+  'verifiedById', 'verifiedAt', 'reviewedByDoctorAt', 'completedAt',
+  'reportFindings', 'reportImpression', 'attachments', 'processedById',
+  'patientDateOfBirthAtOrder', 'patientGenderAtOrder', 'diagnosticDiscipline',
+  'requestOrigin', 'referredAffiliateId', 'referredAt', 'resultVersion',
 ];
 
-router.put('/:id', auth, async (req, res, next) => {
+router.put('/:id', processAuth, async (req, res, next) => {
   try {
-    const exists = await prisma.labRequest.findFirst({ where: { id: req.params.id, facilityId: req.ctx.facilityId } });
+    const exists = await prisma.labRequest.findFirst({ where: scopedQueueWhere(req, { id: req.params.id, facilityId: req.ctx.facilityId }) });
     if (!exists) return res.status(404).json({ error: 'Not found' });
 
     const { id, facilityId, createdAt, updatedAt, ...data } = req.body;
@@ -190,26 +231,31 @@ router.put('/:id', auth, async (req, res, next) => {
     const attempted = RESULT_FIELDS.filter((f) => f in data);
     if (attempted.length) {
       return res.status(400).json({
-        error: 'Results must be entered through the result endpoint so they are checked against the reference range',
+        error: 'Lifecycle and result fields must use their dedicated audited endpoints',
         fields: attempted,
-        use: `PUT /lab/${req.params.id}/result`,
+        use: `POST /lab/${req.params.id}/status or PUT /lab/${req.params.id}/result`,
       });
     }
 
-    if (data.status === 'COMPLETED' && !exists.completedAt) data.completedAt = new Date();
     const r = await prisma.labRequest.update({ where: { id: req.params.id }, data });
     res.json(r);
   } catch (e) { next(e); }
 });
 
 // Move an investigation through its lifecycle, recording who did what and when.
-router.post('/:id/status', auth, async (req, res, next) => {
+router.post('/:id/status', processAuth, async (req, res, next) => {
   try {
-    const exists = await prisma.labRequest.findFirst({ where: { id: req.params.id, facilityId: req.ctx.facilityId } });
+    const exists = await prisma.labRequest.findFirst({ where: scopedQueueWhere(req, { id: req.params.id, facilityId: req.ctx.facilityId }) });
     if (!exists) return res.status(404).json({ error: 'Not found' });
 
     const { status, specimenId, specimenType } = req.body || {};
     if (!status) return res.status(400).json({ error: 'status is required' });
+    if (['PRELIMINARY', 'COMPLETED', 'CORRECTED'].includes(status)) {
+      return res.status(400).json({
+        error: 'A diagnostic result can only be finalized through the result endpoint',
+        use: `PUT /lab/${req.params.id}/result`,
+      });
+    }
     if (!canTransition(exists.status, status)) {
       return res.status(409).json({ error: transitionError(exists.status, status) });
     }
@@ -232,9 +278,9 @@ router.post('/:id/status', auth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-router.put('/:id/result', auth, async (req, res, next) => {
+router.put('/:id/result', processAuth, async (req, res, next) => {
   try {
-    const exists = await prisma.labRequest.findFirst({ where: { id: req.params.id, facilityId: req.ctx.facilityId } });
+    const exists = await prisma.labRequest.findFirst({ where: scopedQueueWhere(req, { id: req.params.id, facilityId: req.ctx.facilityId }) });
     if (!exists) return res.status(404).json({ error: 'Not found' });
 
     const {
@@ -243,12 +289,31 @@ router.put('/:id/result', auth, async (req, res, next) => {
       reportFindings, reportImpression, attachments, preliminary,
     } = req.body || {};
 
-    // Reference ranges come from the catalogue unless the operator overrides them.
+    if ([referenceLow, referenceHigh, criticalLow, criticalHigh].some((value) => value !== undefined)) {
+      return res.status(400).json({
+        error: 'Reference and critical ranges are controlled by the facility diagnostic catalogue, not result entry',
+      });
+    }
+    if (resultValue !== undefined && resultValue !== null && !Number.isFinite(Number(resultValue))) {
+      return res.status(400).json({ error: 'resultValue must be a finite number' });
+    }
+    if (resultValue == null && !String(result || '').trim() && !String(reportFindings || '').trim() && !String(reportImpression || '').trim()) {
+      return res.status(400).json({ error: 'Enter a numeric result, narrative result, findings, or impression before saving' });
+    }
+    if (exists.testType === 'LAB' && ['PENDING', 'ACCEPTED'].includes(exists.status)) {
+      return res.status(409).json({
+        error: 'Record specimen collection/receipt before entering a laboratory result',
+        allowedNext: TRANSITIONS[exists.status],
+      });
+    }
+
+    // Reference ranges come only from the facility catalogue. Result-entry
+    // staff cannot silently redefine a range while entering a value.
     let ranges = {
-      referenceLow: referenceLow ?? exists.referenceLow,
-      referenceHigh: referenceHigh ?? exists.referenceHigh,
-      criticalLow: criticalLow ?? null,
-      criticalHigh: criticalHigh ?? null,
+      referenceLow: exists.referenceLow,
+      referenceHigh: exists.referenceHigh,
+      criticalLow: null,
+      criticalHigh: null,
     };
     let unit = resultUnit ?? exists.resultUnit;
 
@@ -258,10 +323,10 @@ router.put('/:id/result', auth, async (req, res, next) => {
       });
       if (cat) {
         ranges = {
-          referenceLow: referenceLow ?? cat.referenceLow,
-          referenceHigh: referenceHigh ?? cat.referenceHigh,
-          criticalLow: criticalLow ?? cat.criticalLow,
-          criticalHigh: criticalHigh ?? cat.criticalHigh,
+          referenceLow: cat.referenceLow,
+          referenceHigh: cat.referenceHigh,
+          criticalLow: cat.criticalLow,
+          criticalHigh: cat.criticalHigh,
         };
         unit = unit ?? cat.unit;
       }
@@ -273,40 +338,71 @@ router.put('/:id/result', auth, async (req, res, next) => {
     const isCorrection = exists.status === 'COMPLETED' || exists.status === 'CORRECTED';
     const nextStatus = preliminary ? 'PRELIMINARY' : (isCorrection ? 'CORRECTED' : 'COMPLETED');
 
-    const r = await prisma.labRequest.update({
-      where: { id: exists.id },
-      data: {
-        result: result ?? exists.result,
-        aiDraft: aiDraft || null,
-        resultValue: resultValue != null ? Number(resultValue) : exists.resultValue,
-        resultUnit: unit,
-        referenceLow: ranges.referenceLow,
-        referenceHigh: ranges.referenceHigh,
-        abnormalFlag,
-        isCritical,
-        reportFindings: reportFindings ?? exists.reportFindings,
-        reportImpression: reportImpression ?? exists.reportImpression,
-        attachments: Array.isArray(attachments) ? attachments : exists.attachments,
-        status: nextStatus,
-        completedAt: nextStatus === 'PRELIMINARY' ? exists.completedAt : new Date(),
-        processedById: req.ctx.userId,
-        // A new/corrected result has not been seen by the ordering doctor yet.
-        reviewedByDoctorAt: null,
-        criticalAckById: isCritical ? null : exists.criticalAckById,
-        criticalAckAt: isCritical ? null : exists.criticalAckAt,
-      },
+    const nextVersion = exists.resultVersion + 1;
+    const { saved, clinicalAlert } = await prisma.$transaction(async (tx) => {
+      const savedResult = await tx.labRequest.update({
+        where: { id: exists.id },
+        data: {
+          result: result ?? exists.result,
+          aiDraft: aiDraft || null,
+          resultValue: resultValue != null ? Number(resultValue) : exists.resultValue,
+          resultUnit: unit,
+          referenceLow: ranges.referenceLow,
+          referenceHigh: ranges.referenceHigh,
+          abnormalFlag,
+          isCritical,
+          reportFindings: reportFindings ?? exists.reportFindings,
+          reportImpression: reportImpression ?? exists.reportImpression,
+          attachments: Array.isArray(attachments) ? attachments : exists.attachments,
+          status: nextStatus,
+          completedAt: nextStatus === 'PRELIMINARY' ? exists.completedAt : new Date(),
+          processedById: req.ctx.userId,
+          resultVersion: nextVersion,
+          // A new/corrected result has not been seen by the ordering doctor yet.
+          reviewedByDoctorAt: null,
+          criticalAckById: isCritical ? null : exists.criticalAckById,
+          criticalAckAt: isCritical ? null : exists.criticalAckAt,
+        },
+      });
+
+      let alert = null;
+      if (isCritical) {
+        const numeric = resultValue != null ? `${Number(resultValue)}${unit ? ` ${unit}` : ''}` : (result || 'Critical result');
+        alert = await tx.clinicalAlert.create({
+          data: {
+            facilityId: req.ctx.facilityId,
+            patientId: exists.patientId,
+            assignedToId: exists.requestedById,
+            sourceType: 'LAB_REQUEST',
+            sourceId: exists.id,
+            sourceKey: exists.testName,
+            dedupeKey: `LAB_REQUEST:${exists.id}:v${nextVersion}`,
+            category: 'DIAGNOSTIC_RESULT',
+            severity: 'CRITICAL',
+            status: 'OPEN',
+            title: `${exists.testName} is critical`,
+            detail: `${abnormalFlag?.replace('_', ' ') || 'Critical'} diagnostic result requires acknowledgement, action and resolution.`,
+            latestValue: numeric,
+          },
+        });
+      }
+
+      await tx.auditLog.create({
+        data: {
+          facilityId: req.ctx.facilityId,
+          userId: req.ctx.userId,
+          action: isCorrection ? 'lab.result.correct' : 'lab.result.enter',
+          resource: 'LabRequest',
+          resourceId: savedResult.id,
+          reason: isCritical ? `CRITICAL result entered; alert ${alert?.id}` : 'Result entered',
+          ip: req.ip,
+        },
+      });
+
+      return { saved: savedResult, clinicalAlert: alert };
     });
 
-    prisma.auditLog.create({
-      data: {
-        facilityId: req.ctx.facilityId, userId: req.ctx.userId,
-        action: isCorrection ? 'lab.result.correct' : 'lab.result.enter',
-        resource: 'LabRequest', resourceId: r.id,
-        reason: isCritical ? 'CRITICAL result entered' : 'Result entered', ip: req.ip,
-      },
-    }).catch(() => {});
-
-    res.json(r);
+    res.json({ ...saved, clinicalAlert });
   } catch (e) { next(e); }
 });
 
@@ -350,34 +446,158 @@ router.get('/alerts/critical', auth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-router.post('/:id/transfer', auth, async (req, res, next) => {
+// A routine result has a separate, explicit clinician-review event. Critical
+// results must go through the acknowledged critical-alert lifecycle instead.
+router.post('/:id/review', [authenticate, tenant, requirePermission('clinical_write')], async (req, res, next) => {
+  try {
+    const exists = await prisma.labRequest.findFirst({
+      where: { id: req.params.id, facilityId: req.ctx.facilityId },
+    });
+    if (!exists) return res.status(404).json({ error: 'Diagnostic request not found' });
+    if (!['PRELIMINARY', 'COMPLETED', 'CORRECTED'].includes(exists.status)) {
+      return res.status(409).json({ error: 'Only a reported diagnostic result can be marked reviewed' });
+    }
+    if (exists.isCritical && !exists.criticalAckAt) {
+      return res.status(409).json({ error: 'A critical result must be acknowledged through the critical-alert workflow first' });
+    }
+
+    const reviewed = await prisma.$transaction(async (tx) => {
+      const saved = await tx.labRequest.update({
+        where: { id: exists.id },
+        data: { reviewedByDoctorAt: new Date() },
+      });
+      await tx.auditLog.create({
+        data: {
+          facilityId: req.ctx.facilityId,
+          userId: req.ctx.userId,
+          action: 'lab.result.review',
+          resource: 'LabRequest',
+          resourceId: exists.id,
+          reason: req.body?.note || `Reviewed result version ${exists.resultVersion}`,
+          ip: req.ip,
+        },
+      });
+      return saved;
+    });
+    res.json(reviewed);
+  } catch (e) { next(e); }
+});
+
+// Refer an ordered investigation to a configured affiliate provider. This is
+// deliberately distinct from /transfer below, which delivers a completed
+// result to the patient's Awibi Identity inbox.
+router.post('/:id/refer', processAuth, async (req, res, next) => {
+  try {
+    const request = await prisma.labRequest.findFirst({
+      where: scopedQueueWhere(req, { id: req.params.id, facilityId: req.ctx.facilityId }),
+    });
+    if (!request) return res.status(404).json({ error: 'Diagnostic request not found' });
+
+    const { affiliateId, notes } = req.body || {};
+    if (!affiliateId) return res.status(400).json({ error: 'affiliateId is required' });
+    const affiliate = await prisma.affiliate.findFirst({
+      where: {
+        id: affiliateId,
+        facilityId: req.ctx.facilityId,
+        isActive: true,
+        type: { in: request.testType === 'IMAGING' ? ['IMAGING', 'HOSPITAL'] : ['LAB', 'HOSPITAL'] },
+      },
+    });
+    if (!affiliate) return res.status(404).json({ error: 'Compatible affiliate provider not found in this facility' });
+    if (!canTransition(request.status, 'IN_PROGRESS')) {
+      return res.status(409).json({ error: transitionError(request.status, 'IN_PROGRESS') });
+    }
+
+    const referred = await prisma.$transaction(async (tx) => {
+      const saved = await tx.labRequest.update({
+        where: { id: request.id },
+        data: {
+          status: 'IN_PROGRESS',
+          processedById: req.ctx.userId,
+          referredAffiliateId: affiliate.id,
+          referredAt: new Date(),
+          referralNotes: notes || null,
+          receivedAt: request.receivedAt || new Date(),
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          facilityId: req.ctx.facilityId,
+          userId: req.ctx.userId,
+          action: 'lab.refer.affiliate',
+          resource: 'LabRequest',
+          resourceId: request.id,
+          reason: `Referred to ${affiliate.name}`,
+          ip: req.ip,
+        },
+      });
+      return saved;
+    });
+    res.json({ ...referred, affiliate: { id: affiliate.id, name: affiliate.name, type: affiliate.type } });
+  } catch (e) { next(e); }
+});
+
+router.post('/:id/transfer', deliveryAuth, async (req, res, next) => {
   try {
     const r = await prisma.labRequest.findFirst({
       where: { id: req.params.id, facilityId: req.ctx.facilityId },
-      include: { patient: { select: { id: true, firstName: true, lastName: true, universalPatientId: true, nin: true } } },
+      include: { patient: { select: {
+        id: true, firstName: true, lastName: true, universalPatientId: true,
+        identityPairwiseId: true, identityLinkStatus: true, identityConsentGrantId: true,
+      } } },
     });
     if (!r) return res.status(404).json({ error: 'Lab request not found' });
-    if (r.status !== 'COMPLETED') return res.status(400).json({ error: 'Lab result must be COMPLETED before transfer' });
-    if (!r.result) return res.status(400).json({ error: 'No result to transfer' });
-    const lookupKey = r.patient.universalPatientId || r.patient.nin;
-    if (!lookupKey) return res.status(400).json({ error: 'Patient has no UPID or NIN — cannot locate identity record' });
-
-    const lookupRes = await fetch(`${IDENTITY_URL}/v1/identity/lookup/${encodeURIComponent(lookupKey)}`, {
-      headers: {
-        'x-facility-id': req.ctx.facilityId,
-        'x-awibi-secret': SHARED_SECRET,
+    if (!['COMPLETED', 'CORRECTED'].includes(r.status)) return res.status(400).json({ error: 'Only a final diagnostic result can be released' });
+    const reportBody = [
+      r.result,
+      r.reportFindings ? `Findings\n${r.reportFindings}` : null,
+      r.reportImpression ? `Impression\n${r.reportImpression}` : null,
+    ].filter(Boolean).join('\n\n');
+    if (!reportBody) return res.status(400).json({ error: 'No result to transfer' });
+    const consent = await prisma.consentGrant.findFirst({
+      where: {
+        id: r.patient.identityConsentGrantId || undefined,
+        patientId: r.patient.id,
+        facilityId: req.ctx.facilityId,
+        isActive: true,
+        revokedAt: null,
+        scope: { in: ['FULL', 'LAB_ONLY'] },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
       },
-      signal: AbortSignal.timeout(5000),
+      orderBy: { grantedAt: 'desc' },
     });
-    if (!lookupRes.ok) return res.status(502).json({ error: 'Could not locate patient in Identity system' });
-    const identityPatient = await lookupRes.json();
+    if (!consent) {
+      return res.status(403).json({
+        error: 'A current FULL or LAB_ONLY patient consent is required before releasing this result to Awibi Identity',
+      });
+    }
+    if (!r.patient.identityPairwiseId || r.patient.identityLinkStatus !== 'ACTIVE') {
+      return res.status(409).json({
+        error: 'Link this patient record to Awibi Identity before releasing results',
+      });
+    }
+    if (!SHARED_SECRET) return res.status(503).json({ error: 'Identity service secret is not configured' });
 
-    const inboxRes = await fetch(`${IDENTITY_URL}/v1/identity/${identityPatient.id}/inbox`, {
+    const inboxRes = await fetch(`${IDENTITY_URL}/v1/identity/facility/${encodeURIComponent(r.patient.identityPairwiseId)}/inbox`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-awibi-secret': SHARED_SECRET },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-awibi-secret': SHARED_SECRET,
+        'x-facility-id': req.ctx.facilityId,
+      },
       body: JSON.stringify({
-        type: 'LAB_RESULT', title: `Lab Result: ${r.testName}`, body: r.result,
-        meta: { labRequestId: r.id, testType: r.testType, completedAt: r.completedAt, facilityId: req.ctx.facilityId },
+        type: 'DIAGNOSTIC_RESULT', title: `Diagnostic Result: ${r.testName}`, body: reportBody,
+        meta: {
+          labRequestId: r.id,
+          testType: r.testType,
+          discipline: r.diagnosticDiscipline,
+          completedAt: r.completedAt,
+          resultVersion: r.resultVersion,
+          facilityId: req.ctx.facilityId,
+          consentGrantId: consent.id,
+        },
+        source: { recordType: 'LabRequest', recordId: r.id, version: r.resultVersion },
+        consent: { reference: consent.id },
       }),
       signal: AbortSignal.timeout(5000),
     });
@@ -386,6 +606,20 @@ router.post('/:id/transfer', auth, async (req, res, next) => {
       return res.status(502).json({ error: 'Failed to deliver to patient inbox', detail: errBody });
     }
     const message = await inboxRes.json();
+    await prisma.$transaction([
+      prisma.patient.update({ where: { id: r.patient.id }, data: { consentLinkedToIdentity: true } }),
+      prisma.auditLog.create({
+        data: {
+          facilityId: req.ctx.facilityId,
+          userId: req.ctx.userId,
+          action: 'lab.result.release.identity',
+          resource: 'LabRequest',
+          resourceId: r.id,
+          reason: `Released result version ${r.resultVersion} under consent ${consent.id}`,
+          ip: req.ip,
+        },
+      }),
+    ]);
     res.json({ message: 'Lab result sent to patient inbox', inboxMessage: message });
   } catch (e) { next(e); }
 });

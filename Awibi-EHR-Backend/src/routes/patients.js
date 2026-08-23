@@ -18,6 +18,66 @@ const clinicalWriteAuth = [authenticate, tenant, requirePermission('clinical_wri
 const prescriptionsWriteAuth = [authenticate, tenant, requirePermission('prescriptions_write')];
 
 const IDENTITY_URL = process.env.IDENTITY_BACKEND_URL || 'http://localhost:8001';
+const SHARED_SECRET = process.env.AWIBI_SHARED_SECRET;
+
+async function linkPatientToIdentity(req, patient, identifier, consentGrant) {
+  if (!SHARED_SECRET) throw Object.assign(new Error('Identity service secret is not configured'), { statusCode: 503 });
+  const response = await fetch(`${IDENTITY_URL}/v1/identity/facility/link`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-awibi-secret': SHARED_SECRET,
+      'x-facility-id': req.ctx.facilityId,
+    },
+    body: JSON.stringify({
+      facilityPatientRef: patient.id,
+      identifier,
+      assurance: 'FACILITY_ATTESTED',
+      purpose: consentGrant.purpose,
+      consent: {
+        reference: consentGrant.id,
+        scope: consentGrant.scope,
+        grantedAt: consentGrant.grantedAt,
+        expiresAt: consentGrant.expiresAt,
+        evidence: { capture: 'EHR_STAFF_ASSISTED', recordedByUserId: req.ctx.userId },
+      },
+    }),
+    signal: AbortSignal.timeout(5000),
+  });
+  let body = {};
+  try { body = await response.json(); } catch { /* handled below */ }
+  if (!response.ok) {
+    throw Object.assign(new Error(body.error || 'Identity link failed'), { statusCode: response.status >= 500 ? 502 : response.status });
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const linked = await tx.patient.update({
+      where: { id: patient.id },
+      data: {
+        identityPairwiseId: body.pairwiseId,
+        identityContinuityCode: body.identity?.universalPatientId || null,
+        identityLinkStatus: body.linkStatus || 'ACTIVE',
+        identityAssurance: body.assurance || 'FACILITY_ATTESTED',
+        identityLinkedAt: body.linkedAt ? new Date(body.linkedAt) : new Date(),
+        identityLastVerifiedAt: new Date(),
+        identityConsentGrantId: consentGrant.id,
+        consentLinkedToIdentity: true,
+      },
+    });
+    await tx.auditLog.create({
+      data: {
+        facilityId: req.ctx.facilityId,
+        userId: req.ctx.userId,
+        action: 'patient.identity.link',
+        resource: 'Patient',
+        resourceId: patient.id,
+        reason: `Pairwise Identity link under consent ${consentGrant.id}`,
+        ip: req.ip,
+      },
+    });
+    return linked;
+  });
+}
 
 // GET /v1/patients
 router.get('/', auth, async (req, res, next) => {
@@ -94,9 +154,30 @@ router.get('/lookup', auth, async (req, res, next) => {
 // GET /v1/patients/resolve/:query
 router.get('/resolve/:query', auth, async (req, res, next) => {
   try {
-    const q = req.params.query.toUpperCase().trim();
+    const rawQuery = String(req.params.query || '').trim();
+    const q = rawQuery.toUpperCase();
     const fid = req.ctx.facilityId;
-    const patient = await prisma.patient.findFirst({
+    if (rawQuery.length < 3) {
+      return res.status(400).json({ error: 'Enter at least 3 characters', field: 'query' });
+    }
+
+    // Never use a partial phone match to silently choose a chart. Family phone
+    // numbers are routinely shared in Nigeria, and findFirst() turns that normal
+    // situation into a wrong-patient clinical event. Strong identifiers are
+    // resolved first; phone matches are returned as explicit candidates.
+    const safePatientSelect = {
+      id: true,
+      firstName: true,
+      lastName: true,
+      universalPatientId: true,
+      mrn: true,
+      dateOfBirth: true,
+      gender: true,
+      status: true,
+      hmo: true,
+      avatar: true,
+    };
+    const exactIdentifier = await prisma.patient.findFirst({
       where: {
         facilityId: fid,
         isArchived: false,
@@ -104,13 +185,44 @@ router.get('/resolve/:query', auth, async (req, res, next) => {
           { universalPatientId: q },
           { mrn: q },
           { nin: q },
-          { phone: { contains: req.params.query, mode: 'insensitive' } },
         ],
       },
+      select: safePatientSelect,
     });
-    if (!patient) return res.status(404).json({ error: 'Patient not found', register: true });
+    if (exactIdentifier) {
+      prisma.auditLog.create({ data: { facilityId: fid, userId: req.ctx.userId, action: 'patient.resolve', resource: 'Patient', resourceId: exactIdentifier.id, reason: req.query.reason || 'Treatment', ip: req.ip } }).catch(() => {});
+      return res.json(exactIdentifier);
+    }
+
+    const parsedPhone = normalisePhone(rawQuery);
+    if (!parsedPhone.ok || !parsedPhone.value) {
+      return res.status(404).json({ error: 'Patient not found', register: true });
+    }
+    const candidates = await prisma.patient.findMany({
+      where: { facilityId: fid, isArchived: false, phone: parsedPhone.value },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      take: 10,
+      select: safePatientSelect,
+    });
+    if (!candidates.length) return res.status(404).json({ error: 'Patient not found', register: true });
+    if (candidates.length > 1) {
+      prisma.auditLog.create({
+        data: {
+          facilityId: fid, userId: req.ctx.userId, action: 'patient.resolve_ambiguous',
+          resource: 'Patient', reason: req.query.reason || 'Treatment', ip: req.ip,
+          details: { candidateCount: candidates.length, searchType: 'SHARED_PHONE' },
+        },
+      }).catch(() => {});
+      return res.status(409).json({
+        error: 'More than one patient uses this phone number. Confirm the person before opening a chart.',
+        ambiguous: true,
+        candidates,
+      });
+    }
+
+    const [patient] = candidates;
     prisma.auditLog.create({ data: { facilityId: fid, userId: req.ctx.userId, action: 'patient.resolve', resource: 'Patient', resourceId: patient.id, reason: req.query.reason || 'Treatment', ip: req.ip } }).catch(() => {});
-    res.json(patient);
+    return res.json(patient);
   } catch (e) { next(e); }
 });
 
@@ -146,7 +258,8 @@ router.post('/', demographicsWriteAuth, async (req, res, next) => {
   try {
     const { firstName, lastName, dateOfBirth, gender, phone, email, address, state, nin, hmo,
       bloodType, height, weight, maritalStatus, religion, emergencyContactName, emergencyContactPhone,
-      emergencyContactRelation, entryMode, status } = req.body;
+      emergencyContactRelation, entryMode, status, identityIdentifier, identityConsentGranted,
+      identityConsentScope } = req.body;
     if (!firstName || !lastName) return res.status(400).json({ error: 'firstName and lastName are required' });
 
     // Identity data is validated hard: it is what staff use to find this person
@@ -209,23 +322,9 @@ router.post('/', demographicsWriteAuth, async (req, res, next) => {
       }
     }
 
-    let universalPatientId = null;
-    if (nin) {
-      try {
-        const idRes = await fetch(`${IDENTITY_URL}/v1/identity/lookup/${encodeURIComponent(nin)}`, {
-          headers: {
-            'x-awibi-secret': process.env.AWIBI_SHARED_SECRET,
-            'x-facility-id': req.ctx.facilityId,
-          },
-          signal: AbortSignal.timeout(3000),
-        });
-        if (idRes.ok) {
-          const idData = await idRes.json();
-          if (idData?.patient?.universalPatientId) universalPatientId = idData.patient.universalPatientId;
-        }
-      } catch { /* Identity Backend unreachable — degrade gracefully */ }
-    }
-    if (!universalPatientId) universalPatientId = await ensureUniqueUPID();
+    // Local registration never performs hidden matching against NIN or phone.
+    // Identity linkage requires an explicit identifier and recorded consent.
+    const universalPatientId = await ensureUniqueUPID();
 
     // MRN allocation is serialised per facility — see createPatientWithMrn for
     // why counting rows was unsafe.
@@ -257,7 +356,135 @@ router.post('/', demographicsWriteAuth, async (req, res, next) => {
       });
     }
 
-    res.status(201).json(warnings.length ? { ...patient, warnings } : patient);
+    let responsePatient = patient;
+    if (identityIdentifier && identityConsentGranted === true) {
+      const scope = ['FULL', 'LAB_ONLY'].includes(identityConsentScope) ? identityConsentScope : 'LAB_ONLY';
+      const consentGrant = await prisma.consentGrant.create({
+        data: {
+          patientId: patient.id,
+          facilityId: req.ctx.facilityId,
+          scope,
+          grantedBy: req.ctx.userId,
+          purpose: 'Link this facility record to Awibi Identity and deliver consented health information',
+          isActive: true,
+          ip: req.ip,
+        },
+      });
+      try {
+        responsePatient = await linkPatientToIdentity(req, patient, identityIdentifier, consentGrant);
+      } catch (error) {
+        await prisma.consentGrant.update({
+          where: { id: consentGrant.id },
+          data: { isActive: false, revokedAt: new Date() },
+        }).catch(() => {});
+        warnings.push({
+          code: 'IDENTITY_LINK_PENDING',
+          message: `The local patient record was created, but Identity linkage did not complete: ${error.message}`,
+        });
+      }
+    } else if (identityIdentifier) {
+      warnings.push({
+        code: 'IDENTITY_CONSENT_REQUIRED',
+        message: 'Identity was not linked because explicit patient consent was not recorded.',
+      });
+    }
+
+    res.status(201).json(warnings.length ? { ...responsePatient, warnings } : responsePatient);
+  } catch (e) { next(e); }
+});
+
+// Explicit Identity linkage for an existing facility record. Matching is never
+// triggered simply because a receptionist typed a NIN or phone number.
+router.post('/:id/identity/link', demographicsWriteAuth, async (req, res, next) => {
+  try {
+    const patient = await prisma.patient.findFirst({
+      where: { id: req.params.id, facilityId: req.ctx.facilityId, isArchived: false },
+    });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+    const { identifier, consentConfirmed, scope = 'LAB_ONLY' } = req.body || {};
+    if (!identifier) return res.status(400).json({ error: 'Awibi Identity code, verified phone, or approved identity token is required' });
+    if (consentConfirmed !== true) return res.status(400).json({ error: 'Explicit patient consent must be confirmed before Identity linkage' });
+    if (!['FULL', 'LAB_ONLY'].includes(scope)) return res.status(400).json({ error: 'scope must be FULL or LAB_ONLY' });
+
+    const consentGrant = await prisma.consentGrant.create({
+      data: {
+        patientId: patient.id,
+        facilityId: req.ctx.facilityId,
+        scope,
+        grantedBy: req.ctx.userId,
+        purpose: 'Link this facility record to Awibi Identity and deliver consented health information',
+        isActive: true,
+        ip: req.ip,
+      },
+    });
+    try {
+      const linked = await linkPatientToIdentity(req, patient, identifier, consentGrant);
+      return res.json(linked);
+    } catch (error) {
+      await prisma.consentGrant.update({
+        where: { id: consentGrant.id },
+        data: { isActive: false, revokedAt: new Date() },
+      }).catch(() => {});
+      throw error;
+    }
+  } catch (e) { next(e); }
+});
+
+router.post('/:id/identity/revoke', demographicsWriteAuth, async (req, res, next) => {
+  try {
+    const patient = await prisma.patient.findFirst({
+      where: { id: req.params.id, facilityId: req.ctx.facilityId, isArchived: false },
+    });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+    if (!patient.identityPairwiseId || patient.identityLinkStatus !== 'ACTIVE') {
+      return res.status(409).json({ error: 'Patient does not have an active Identity link' });
+    }
+    if (!SHARED_SECRET) return res.status(503).json({ error: 'Identity service secret is not configured' });
+
+    const response = await fetch(`${IDENTITY_URL}/v1/identity/facility/${encodeURIComponent(patient.identityPairwiseId)}/revoke`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-awibi-secret': SHARED_SECRET,
+        'x-facility-id': req.ctx.facilityId,
+      },
+      body: JSON.stringify({ consentReference: patient.identityConsentGrantId }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      let body = {};
+      try { body = await response.json(); } catch { /* handled below */ }
+      return res.status(response.status >= 500 ? 502 : response.status).json({ error: body.error || 'Identity revocation failed' });
+    }
+
+    const revoked = await prisma.$transaction(async (tx) => {
+      await tx.consentGrant.updateMany({
+        where: {
+          id: patient.identityConsentGrantId || '__no_identity_consent__',
+          patientId: patient.id,
+          facilityId: req.ctx.facilityId,
+          isActive: true,
+        },
+        data: { isActive: false, revokedAt: new Date() },
+      });
+      const saved = await tx.patient.update({
+        where: { id: patient.id },
+        data: { identityLinkStatus: 'REVOKED', consentLinkedToIdentity: false, identityLastVerifiedAt: new Date() },
+      });
+      await tx.auditLog.create({
+        data: {
+          facilityId: req.ctx.facilityId,
+          userId: req.ctx.userId,
+          action: 'patient.identity.revoke',
+          resource: 'Patient',
+          resourceId: patient.id,
+          reason: req.body?.reason || 'Patient revoked Identity linkage',
+          ip: req.ip,
+        },
+      });
+      return saved;
+    });
+    res.json(revoked);
   } catch (e) { next(e); }
 });
 
@@ -266,7 +493,13 @@ router.put('/:id', demographicsWriteAuth, async (req, res, next) => {
   try {
     const exists = await prisma.patient.findFirst({ where: { id: req.params.id, facilityId: req.ctx.facilityId, isArchived: false } });
     if (!exists) return res.status(404).json({ error: 'Patient not found' });
-    const { id, facilityId, universalPatientId, mrn, createdAt, updatedAt, ...data } = req.body;
+    const {
+      id, facilityId, universalPatientId, mrn, createdAt, updatedAt,
+      identityPairwiseId, identityContinuityCode, identityLinkStatus,
+      identityAssurance, identityLinkedAt, identityLastVerifiedAt,
+      identityConsentGrantId, consentLinkedToIdentity,
+      ...data
+    } = req.body;
 
     // The same identity rules as registration — an edit must not be a way to
     // slip past validation that creation enforces.

@@ -1,0 +1,119 @@
+AWIBI EHR — ROLE, DIAGNOSTICS, PHARMACY, RECORDS, EQUIPMENT AND PROVENANCE AUDIT
+Date: 16 August 2026
+Status vocabulary: [x] implemented and evidenced; [~] partial; [ ] not built / release work
+
+DECISIONS THAT MUST NOT DRIFT
+
+[x] 01. Patient registration and demographic correction belong to Records/Reception and authorised facility administrators.
+[x] 02. Doctors, nurses and pharmacists may find/read patient records only within their care role; patient access does not make registration a doctor function.
+[x] 03. The API protects registration with patient_demographics_write.
+[x] 04. The UI now hides Register Patient from roles without patient_demographics_write.
+[x] 05. The /patients/add route now requires patient_demographics_write, not generic patient read access.
+[x] 06. Shared patient access is now labelled Patient Access in navigation instead of placing registration under Clinical.
+[x] 07. Doctors own consultation, diagnosis, prescriptions and diagnostic/nursing orders within scope.
+[x] 08. Diagnostics staff process assigned investigations; they do not originate the doctor's clinical order.
+[x] 09. Pharmacists must verify/dispense/recommend without silently rewriting a signed prescription.
+[x] 10. Admin owns configuration and oversight; being facility owner does not automatically grant clinical authorship.
+
+AUTOMATIC PROFESSIONAL / DATE / TIME PROVENANCE
+
+[x] 11. Consultation author is taken from the authenticated user; the browser cannot supply another author.
+[x] 12. Consultation EHR recorded time is immutable server createdAt.
+[~] 13. Consultation clinical occurrence time defaults to server now; code/build complete, local database migration and live E2E pending.
+[~] 14. A clinician may select an earlier care time for retrospective documentation; code/build complete, local database migration and live E2E pending.
+[~] 15. A retrospective consultation requires a late-entry reason; code/build complete, local database migration and live E2E pending.
+[~] 16. Future consultation times are rejected by the API; code complete, local runtime evidence pending.
+[~] 17. Care time, EHR record time, author, reviewer and signer remain distinct facts; local database migration pending.
+[x] 18. Monitoring-chart creator and EHR creation time are automatic.
+[~] 19. Monitoring start time defaults to server now or accepts an explicitly justified earlier time; local database migration pending.
+[x] 20. Each observation recorder and immutable EHR createdAt are automatic.
+[~] 21. Observation time defaults to server now or accepts an explicitly justified earlier time; local database migration pending.
+[~] 22. Future monitoring/observation times are rejected; code complete, local runtime evidence pending.
+[~] 23. Late entries are visibly labelled with occurrence time, EHR time and reason; frontend production build passes, live E2E pending.
+[x] 24. Signed consultations remain immutable; corrections use an amendment rather than overwriting history.
+
+DIAGNOSTICS — CURRENTLY WORKING
+
+[x] 25. One catalogue covers laboratory, imaging, ECG and other diagnostic requests.
+[x] 26. New Encounter and standalone ordering both require an active facility catalogue item.
+[x] 27. Orders snapshot unit, reference range, discipline, specimen and patient demographic context.
+[x] 28. Doctor ordering and diagnostics processing are separated by RBAC.
+[x] 29. Specialist roles exist for radiology, radiography, haematology, chemical pathology, histopathology/morbid anatomy and microbiology.
+[x] 30. Specialist queues are filtered by modality/discipline.
+[x] 31. Laboratory specimen flow and imaging/non-specimen flow use different valid transitions.
+[x] 32. Preliminary, final and corrected reports retain version/provenance.
+[x] 33. Critical results open a persistent acknowledged/acted-on/resolved lifecycle.
+[x] 34. Final consented results can be released to the linked Awibi Identity inbox.
+
+DIAGNOSTICS — STILL REQUIRED BEFORE PRODUCTION CLAIMS
+
+[ ] 35. Facility sign-off for analyser/method/age/sex/pregnancy/population-specific intervals and critical limits.
+[ ] 36. Accession numbers, specimen labels/barcodes, collection identity, rejection reasons and full chain of custody.
+[ ] 37. QC lots/runs, calibration, analyser flags, delta checks and quality-manager release controls.
+[ ] 38. Production PACS/VNA, DICOM modality worklist, diagnostic viewer and immutable imaging retention.
+[ ] 39. Device/analyser interfaces with idempotency, reconciliation and downtime queues.
+[ ] 40. Structured specialist templates, measurements, staging/grading and configurable co-signing.
+[ ] 41. Outsourced/referral specimen tracking through dispatch, receipt, report import and reconciliation.
+[ ] 42. Network operations: multi-site routing, workload balancing, TAT breach escalation and capacity dashboards.
+
+PHARMACY — HONEST CURRENT STATE
+
+[x] 43. Doctor prescriptions are structured and tied to patient, encounter, prescriber and server time.
+[x] 44. Nursing medication-administration records exist separately from prescribing.
+[~] 45. A pharmacist demo role/login and honest placeholder dashboard exist, but not a pharmacy workbench.
+[ ] 46. Facility drug formulary/product master: generic/brand, strength, dose form, pack size, route, barcode and regulatory identifiers.
+[ ] 47. Store/location/bin inventory with opening balance, receipts, issues, adjustments and immutable stock ledger.
+[ ] 48. Batch/lot, expiry, manufacturer/supplier, acquisition cost and selling price.
+[ ] 49. Purchase requisition, approval, purchase order, goods receipt, invoice and supplier-return lifecycle.
+[ ] 50. Prescription verification queue with allergy/interaction/duplication/dose checks and documented pharmacist intervention.
+[ ] 51. Dispense, partial dispense, owing balance, substitution approval, cancellation, patient return and wastage.
+[ ] 52. Every dispense must link patient ID, prescription, pharmacist, quantity, batch, amount, payer and timestamps.
+[ ] 53. Controlled-drug register, dual checks, witnessed destruction and statutory reports.
+[ ] 54. FEFO picking, low-stock/reorder, near-expiry, out-of-stock and recall/quarantine alerts.
+[ ] 55. Cash/HMO/NHIA billing integration, price history, discounts/approvals, receipts and refund reconciliation.
+[ ] 56. Pharmaceutical care plan, drug-therapy-problem tracker, adherence/adverse-effect follow-up and clinician messaging.
+[ ] 57. Stock count/cycle count, variance approval, audit export and branch transfer.
+[ ] 58. Offline/downtime dispensing with conflict-safe resynchronisation.
+
+RECORDS / RECEPTION — CURRENT AND NEXT
+
+[x] 59. Records dashboard provides registration, lookup, appointments, booking requests, emergency intake and household functions.
+[x] 60. Records cannot author vitals, conditions, allergies, prescriptions or signed consultation notes.
+[x] 61. Patient lookup supports Awibi ID, hospital number, NIN and phone where authorised.
+[ ] 62. Add a dedicated Records work queue: new registrations, incomplete demographics, possible duplicates, merges and identity-link exceptions.
+[ ] 63. Add registration source, registering officer, identity evidence, next-of-kin verification and correction history to the visible record.
+[ ] 64. Add document scanning/indexing queue, release-of-information requests, disclosure log and legal holds.
+[ ] 65. Add record-location/legacy-folder tracking for hybrid paper facilities during migration.
+
+EQUIPMENT / INSTRUMENT / ASSET REGISTER — NOT YET BUILT
+
+[ ] 66. Add facility asset register owned by Admin with delegated Records/Stores/Biomedical permissions.
+[ ] 67. Record asset tag, category, make/model, serial number, department/location and custodian.
+[ ] 68. Record purchase/donation/lease source, supplier, acquisition cost, warranty and expected life.
+[ ] 69. Track AVAILABLE / IN_USE / OUT_OF_SERVICE / UNDER_MAINTENANCE / QUARANTINED / RETIRED status.
+[ ] 70. Track calibration, preventive maintenance, breakdown, service company, certificate and next-due dates.
+[ ] 71. Link diagnostic instruments to tests, methods, QC, analyser interfaces and result provenance.
+[ ] 72. Add consumables/spares stock without mixing them with pharmacy medicines.
+[ ] 73. Add check-out/check-in, transfer, loss/damage, decontamination and disposal workflows.
+[ ] 74. Add due/overdue alerts, downtime impact, replacement planning and audit reports.
+
+RELEASE ORDER
+
+[ ] 75. First finish and test the local provenance migration and retrospective-entry E2E evidence.
+[ ] 76. Then implement the pharmacy core ledger + verify/dispense loop as its own bounded module.
+[ ] 77. Then implement Records work queues and asset/equipment register with new granular permissions.
+[ ] 78. Then complete diagnostic accession/QC/PACS/device integrations with named clinical owners.
+[ ] 79. Do not claim complete pharmacy, LIS/PACS, equipment management or country readiness until their acceptance tests and operating procedures pass.
+
+LOCAL SOURCES CROSS-CHECKED
+
+- README.md
+- NOT_BUILT.md
+- BETA_FEEDBACK_MASTER_CHECKLIST.md
+- BETA_FEEDBACK_CRITICAL_REVIEW_2026-08-16.md
+- MANUAL_SETUP_REQUIRED.txt
+- CRITICAL_READINESS_CHECKLIST.md
+- Awibi-EHR-Backend/prisma/schema.prisma
+- Awibi-EHR-Backend/src/utils/permissions.js
+- Awibi-EHR-Frontend/src/lib/permissions.js
+- role dashboards, patient routes, diagnostics routes, nursing routes and current navigation

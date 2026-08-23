@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Calendar, Clock, Search, Edit2, X, CreditCard, CheckCircle } from 'lucide-react';
+import { Plus, Calendar, Clock, Search, Edit2, X, CreditCard, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import EmptyState from '@/components/ui/EmptyState';
-import { format } from 'date-fns';
+import { addDays, addMonths, addWeeks, eachDayOfInterval, endOfDay, endOfMonth, endOfWeek, format, isSameDay, isSameMonth, startOfDay, startOfMonth, startOfWeek, subMonths, subWeeks } from 'date-fns';
 import api from '@/lib/api';
 import PatientPicker from '@/components/clinical/PatientPicker';
 import StatusBadge from '@/components/ui/StatusBadge';
@@ -22,11 +23,26 @@ const PAY_COLOR = {
 
 export default function Appointments() {
   const qc = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const presetPatientId = searchParams.get('patientId') || '';
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [dateFilter, setDateFilter] = useState('');
-  const [modal, setModal] = useState(null); // null | 'add' | appt object
+  const [modal, setModal] = useState(presetPatientId ? 'add' : null); // null | 'add' | appt object
   const [payAppt, setPayAppt] = useState(null);
+  const [calendarView, setCalendarView] = useState('MONTH');
+  const [calendarDate, setCalendarDate] = useState(new Date());
+
+  const calendarStart = calendarView === 'DAY'
+    ? startOfDay(calendarDate)
+    : calendarView === 'WEEK'
+      ? startOfWeek(calendarDate, { weekStartsOn: 1 })
+      : startOfWeek(startOfMonth(calendarDate), { weekStartsOn: 1 });
+  const calendarEnd = calendarView === 'DAY'
+    ? endOfDay(calendarDate)
+    : calendarView === 'WEEK'
+      ? endOfWeek(calendarDate, { weekStartsOn: 1 })
+      : endOfWeek(endOfMonth(calendarDate), { weekStartsOn: 1 });
 
   const { data, isLoading } = useQuery({
     queryKey: ['appointments', search, statusFilter, dateFilter],
@@ -34,6 +50,15 @@ export default function Appointments() {
   });
 
   const appts = data?.appointments || data || [];
+
+  const { data: calendarData, isLoading: calendarLoading } = useQuery({
+    queryKey: ['appointments-calendar', calendarView, calendarStart.toISOString(), calendarEnd.toISOString(), statusFilter],
+    queryFn: () => api.get('/appointments', {
+      params: { startDate: calendarStart.toISOString(), endDate: calendarEnd.toISOString(), status: statusFilter, limit: 500 },
+    }).then(r => r.data),
+  });
+  const calendarAppointments = calendarData?.appointments || calendarData || [];
+  const calendarDays = eachDayOfInterval({ start: calendarStart, end: calendarEnd });
 
   const { mutate: updateStatus } = useMutation({
     mutationFn: ({ id, status }) => api.put(`/appointments/${id}`, { status }),
@@ -49,6 +74,11 @@ export default function Appointments() {
 
   const today = appts.filter(a => a.scheduledAt && format(new Date(a.scheduledAt), 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd'));
   const scheduled = appts.filter(a => a.status === 'SCHEDULED' || a.status === 'CONFIRMED');
+  const moveCalendar = (direction) => {
+    if (calendarView === 'DAY') setCalendarDate(current => addDays(current, direction));
+    else if (calendarView === 'WEEK') setCalendarDate(current => direction > 0 ? addWeeks(current, 1) : subWeeks(current, 1));
+    else setCalendarDate(current => direction > 0 ? addMonths(current, 1) : subMonths(current, 1));
+  };
 
   return (
     <div className="space-y-4">
@@ -62,6 +92,49 @@ export default function Appointments() {
           <Plus size={16} /> Book Appointment
         </button>
       </div>
+
+      <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+        <div className="flex flex-col gap-3 border-b border-gray-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => moveCalendar(-1)} aria-label="Previous period" className="flex size-10 items-center justify-center rounded-lg border border-gray-200 hover:bg-gray-50"><ChevronLeft size={17} /></button>
+            <button type="button" onClick={() => setCalendarDate(new Date())} className="min-h-10 rounded-lg border border-gray-200 px-3 text-sm font-medium hover:bg-gray-50">Today</button>
+            <button type="button" onClick={() => moveCalendar(1)} aria-label="Next period" className="flex size-10 items-center justify-center rounded-lg border border-gray-200 hover:bg-gray-50"><ChevronRight size={17} /></button>
+            <h2 className="ml-1 text-sm font-semibold text-gray-900">
+              {calendarView === 'DAY' ? format(calendarDate, 'EEEE, d MMMM yyyy') : calendarView === 'WEEK' ? `${format(calendarStart, 'd MMM')} – ${format(calendarEnd, 'd MMM yyyy')}` : format(calendarDate, 'MMMM yyyy')}
+            </h2>
+          </div>
+          <div className="inline-flex rounded-lg bg-gray-100 p-1">
+            {['DAY', 'WEEK', 'MONTH'].map(view => (
+              <button key={view} type="button" onClick={() => setCalendarView(view)} className={`min-h-9 rounded-md px-3 text-xs font-semibold ${calendarView === view ? 'bg-white text-[#2D5BFF] shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>{view.charAt(0) + view.slice(1).toLowerCase()}</button>
+            ))}
+          </div>
+        </div>
+        {calendarLoading ? <div className="flex min-h-48 items-center justify-center"><Spinner /></div> : (
+          <div className={`grid ${calendarView === 'DAY' ? 'grid-cols-1' : 'grid-cols-7'} overflow-x-auto`}>
+            {calendarView !== 'DAY' && calendarDays.slice(0, 7).map(day => (
+              <div key={`heading-${day.toISOString()}`} className="min-w-28 border-b border-r border-gray-100 bg-gray-50 px-2 py-2 text-center text-[11px] font-semibold uppercase tracking-wide text-gray-500">{format(day, 'EEE')}</div>
+            ))}
+            {calendarDays.map(day => {
+              const dayAppointments = calendarAppointments.filter(item => item.scheduledAt && isSameDay(new Date(item.scheduledAt), day));
+              return (
+                <button key={day.toISOString()} type="button" onClick={() => setDateFilter(format(day, 'yyyy-MM-dd'))}
+                  className={`${calendarView === 'DAY' ? 'min-h-52' : calendarView === 'WEEK' ? 'min-h-52 min-w-28' : 'min-h-28 min-w-28'} border-b border-r border-gray-100 p-2 text-left align-top hover:bg-blue-50/30 ${calendarView === 'MONTH' && !isSameMonth(day, calendarDate) ? 'bg-gray-50/60 text-gray-400' : 'bg-white'}`}>
+                  <span className={`inline-flex size-7 items-center justify-center rounded-full text-xs font-semibold ${isSameDay(day, new Date()) ? 'bg-[#2D5BFF] text-white' : 'text-gray-700'}`}>{format(day, 'd')}</span>
+                  <div className="mt-1 space-y-1">
+                    {dayAppointments.slice(0, calendarView === 'MONTH' ? 3 : 8).map(item => (
+                      <div key={item.id} className={`truncate rounded px-1.5 py-1 text-[10px] font-medium ${item.status === 'CANCELLED' ? 'bg-gray-100 text-gray-500 line-through' : item.status === 'CONFIRMED' ? 'bg-green-50 text-green-800' : 'bg-blue-50 text-blue-800'}`}>
+                        {format(new Date(item.scheduledAt), 'HH:mm')} {item.patient?.firstName} {item.patient?.lastName}
+                      </div>
+                    ))}
+                    {dayAppointments.length > (calendarView === 'MONTH' ? 3 : 8) && <div className="text-[10px] font-medium text-gray-500">+{dayAppointments.length - (calendarView === 'MONTH' ? 3 : 8)} more</div>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <div className="border-t border-gray-100 px-4 py-2 text-xs text-gray-500">Select a date to filter the detailed appointment list below.</div>
+      </section>
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-2">
@@ -184,6 +257,7 @@ export default function Appointments() {
           open={!!modal}
           onClose={() => setModal(null)}
           initial={modal !== 'add' ? modal : null}
+          initialPatientId={presetPatientId}
         />
       )}
 
@@ -194,11 +268,11 @@ export default function Appointments() {
   );
 }
 
-function AppointmentModal({ open, onClose, initial }) {
+function AppointmentModal({ open, onClose, initial, initialPatientId = '' }) {
   const qc = useQueryClient();
   const isEdit = !!initial;
   const [form, setForm] = useState({
-    patientId: '',
+    patientId: initialPatientId,
     doctorId: '',
     scheduledAt: '',
     duration: 30,

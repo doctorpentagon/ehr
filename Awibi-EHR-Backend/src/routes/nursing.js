@@ -87,6 +87,7 @@ router.get('/monitoring-sheets', read, async (req, res, next) => {
         where, skip, take: Number(limit), orderBy: { startedAt: 'desc' },
         include: {
           patient: { select: { id: true, firstName: true, lastName: true, universalPatientId: true, mrn: true } },
+          createdBy: { select: { id: true, firstName: true, lastName: true, role: true, subRole: true, specialty: true } },
           _count: { select: { entries: true } },
           ...(wantEntries
             ? { entries: { orderBy: { recordedAt: 'desc' }, take: 50 } }
@@ -117,7 +118,12 @@ router.get('/monitoring-sheets/:id', read, async (req, res, next) => {
       where: { id: req.params.id, facilityId: req.ctx.facilityId },
       include: {
         patient: { select: { id: true, firstName: true, lastName: true, universalPatientId: true, dateOfBirth: true } },
-        entries: { orderBy: { recordedAt: 'desc' }, take: 200 },
+        createdBy: { select: { id: true, firstName: true, lastName: true, role: true, subRole: true, specialty: true } },
+        entries: {
+          orderBy: { recordedAt: 'desc' },
+          take: 200,
+          include: { recordedBy: { select: { id: true, firstName: true, lastName: true } } },
+        },
       },
     });
     if (!sheet) return res.status(404).json({ error: 'Monitoring sheet not found' });
@@ -138,7 +144,7 @@ router.post('/monitoring-sheets', writeMonitoring, async (req, res, next) => {
   try {
     const {
       patientId, caseId, admissionId, type, customType, title, fields, metadata,
-      targetValue, targetUnit, frequencyMins, instructions, orderId,
+      targetValue, targetUnit, frequencyMins, instructions, orderId, startedAt, lateEntryReason,
     } = req.body || {};
     if (!patientId) return res.status(400).json({ error: 'patientId is required' });
     if (!type) return res.status(400).json({ error: 'type is required' });
@@ -148,6 +154,14 @@ router.post('/monitoring-sheets', writeMonitoring, async (req, res, next) => {
 
     if (type === 'CUSTOM' && !customType && !title) {
       return res.status(400).json({ error: 'A custom monitoring sheet needs customType or title' });
+    }
+
+    let clinicalStart = new Date();
+    if (startedAt) {
+      clinicalStart = new Date(startedAt);
+      if (Number.isNaN(clinicalStart.getTime())) return res.status(400).json({ error: 'Monitoring start date/time is not valid' });
+      if (clinicalStart.getTime() > Date.now() + 60_000) return res.status(400).json({ error: 'Monitoring start date/time cannot be in the future' });
+      if (!String(lateEntryReason || '').trim()) return res.status(400).json({ error: 'Give a reason for starting this chart retrospectively' });
     }
 
     const template = templateFor(type);
@@ -174,6 +188,8 @@ router.post('/monitoring-sheets', writeMonitoring, async (req, res, next) => {
         targetUnit: targetUnit || template?.targetUnit || null,
         frequencyMins: frequencyMins != null ? Number(frequencyMins) : (template?.frequencyMins ?? null),
         instructions: instructions || null,
+        startedAt: clinicalStart,
+        lateEntryReason: startedAt ? String(lateEntryReason).trim() : null,
       },
     });
 
@@ -282,9 +298,19 @@ router.post('/monitoring-requests/:orderId/initiate', writeMonitoring, async (re
       return res.status(400).json({ error: 'This order does not name a chart type — choose one', field: 'type' });
     }
     const template = templateFor(resolvedType);
-    const resolvedFields = Array.isArray(fields) && fields.length ? fields : (template?.fields || []);
+    let resolvedFields = Array.isArray(fields) && fields.length ? fields : (template?.fields || []);
     if (!resolvedFields.length) {
       return res.status(400).json({ error: 'A chart needs at least one thing to record', field: 'fields' });
+    }
+    const monitoringBands = order.details && typeof order.details === 'object' ? order.details.monitoringBands : null;
+    if (monitoringBands && typeof monitoringBands === 'object') {
+      const primary = resolvedFields.find((field) => field.kind === 'number' && field.required)
+        || resolvedFields.find((field) => field.kind === 'number');
+      if (primary) {
+        resolvedFields = resolvedFields.map((field) => field.key === primary.key
+          ? { ...field, ...monitoringBands }
+          : field);
+      }
     }
 
     const sheet = await prisma.$transaction(async (tx) => {
@@ -372,7 +398,7 @@ router.post('/monitoring-sheets/:id/entries', writeMonitoring, async (req, res, 
       return res.status(409).json({ error: `Cannot add entries to a ${sheet.status.toLowerCase()} sheet` });
     }
 
-    const { values, intakeMl, outputMl, attachmentUrl, notes, recordedAt, isAbnormal } = req.body || {};
+    const { values, intakeMl, outputMl, attachmentUrl, notes, recordedAt, lateEntryReason, isAbnormal } = req.body || {};
 
     // Observations are a clinical record of what happened — never the future.
     let when = new Date();
@@ -381,6 +407,9 @@ router.post('/monitoring-sheets/:id/entries', writeMonitoring, async (req, res, 
       if (Number.isNaN(parsed.getTime())) return res.status(400).json({ error: 'recordedAt is not a valid date' });
       if (parsed.getTime() > Date.now() + 60_000) {
         return res.status(400).json({ error: 'recordedAt cannot be in the future' });
+      }
+      if (!String(lateEntryReason || '').trim()) {
+        return res.status(400).json({ error: 'Give a reason for this retrospective observation' });
       }
       when = parsed;
     }
@@ -401,30 +430,113 @@ router.post('/monitoring-sheets/:id/entries', writeMonitoring, async (req, res, 
       if (Number.isFinite(n)) mapped[field.mapsTo] = (mapped[field.mapsTo] || 0) + n;
     }
 
-    const entry = await prisma.monitoringEntry.create({
-      data: {
-        sheetId: sheet.id,
-        facilityId: req.ctx.facilityId,
-        recordedById: req.ctx.userId,
-        recordedAt: when,
-        values: safeValues,
-        deviations: assessment.deviations,
-        intakeMl: intakeMl != null ? Number(intakeMl) : mapped.intakeMl,
-        outputMl: outputMl != null ? Number(outputMl) : mapped.outputMl,
-        attachmentUrl: attachmentUrl || null,
-        // The client may raise the flag, but never lower one the bands raised.
-        isAbnormal: assessment.isAbnormal || Boolean(isAbnormal),
-        notes: notes || null,
-      },
-    });
-    audit(req, 'monitoring.entry.create', 'MonitoringEntry', entry.id);
+    // The observation and its safety alert are one transaction. It must never be
+    // possible to save a dangerous value but lose the task that tells a clinician
+    // to respond to it.
+    const routed = await prisma.$transaction(async (tx) => {
+      const createdEntry = await tx.monitoringEntry.create({
+        data: {
+          sheetId: sheet.id,
+          facilityId: req.ctx.facilityId,
+          recordedById: req.ctx.userId,
+          recordedAt: when,
+          lateEntryReason: recordedAt ? String(lateEntryReason).trim() : null,
+          values: safeValues,
+          deviations: assessment.deviations,
+          intakeMl: intakeMl != null ? Number(intakeMl) : mapped.intakeMl,
+          outputMl: outputMl != null ? Number(outputMl) : mapped.outputMl,
+          attachmentUrl: attachmentUrl || null,
+          // The client may raise the flag, but never lower one the bands raised.
+          isAbnormal: assessment.isAbnormal || Boolean(isAbnormal),
+          notes: notes || null,
+        },
+      });
 
-    const response = { ...entry, isCritical: assessment.isCritical };
+      const originatingOrder = sheet.orderId
+        ? await tx.order.findFirst({
+          where: { id: sheet.orderId, facilityId: req.ctx.facilityId },
+          select: { orderedById: true },
+        })
+        : null;
+      const lifecycleAlerts = [];
+      const raisedAlertIds = [];
+      const activeStatuses = ['OPEN', 'ACKNOWLEDGED', 'ACTED_ON'];
+
+      for (const [key, deviation] of Object.entries(assessment.deviations)) {
+        const field = (Array.isArray(sheet.fields) ? sheet.fields : []).find((item) => item.key === key);
+        const label = field?.label || key;
+        const unit = field?.unit || null;
+        const value = String(safeValues[key]);
+        const dedupeKey = `monitoring:${sheet.id}:${key}`;
+        const active = await tx.clinicalAlert.findFirst({
+          where: { facilityId: req.ctx.facilityId, dedupeKey, status: { in: activeStatuses } },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        if (deviation.isCritical) {
+          const alertData = {
+            latestEntryId: createdEntry.id,
+            latestValue: value,
+            latestUnit: unit,
+            normalizedAt: null,
+            title: `${label} is critical`,
+            detail: `${value}${unit ? ` ${unit}` : ''} recorded on ${sheet.title}`,
+          };
+          let clinicalAlert;
+          if (active) {
+            clinicalAlert = await tx.clinicalAlert.update({ where: { id: active.id }, data: alertData });
+          } else {
+            clinicalAlert = await tx.clinicalAlert.create({
+              data: {
+                facilityId: req.ctx.facilityId,
+                patientId: sheet.patientId,
+                assignedToId: originatingOrder?.orderedById || null,
+                sourceType: 'MONITORING',
+                sourceId: sheet.id,
+                latestEntryId: createdEntry.id,
+                sourceKey: key,
+                dedupeKey,
+                category: 'OBSERVATION',
+                severity: 'CRITICAL',
+                status: 'OPEN',
+                ...alertData,
+              },
+            });
+            raisedAlertIds.push(clinicalAlert.id);
+          }
+          lifecycleAlerts.push(clinicalAlert);
+        } else if (active) {
+          // A normal follow-up reading is important context, but it cannot silently
+          // close an episode. A named clinician still records what they did and why
+          // it is safe to resolve.
+          lifecycleAlerts.push(await tx.clinicalAlert.update({
+            where: { id: active.id },
+            data: {
+              latestEntryId: createdEntry.id,
+              latestValue: value,
+              latestUnit: unit,
+              normalizedAt: deviation.severity === 'NORMAL' ? when : null,
+            },
+          }));
+        }
+      }
+
+      return { entry: createdEntry, lifecycleAlerts, raisedAlertIds };
+    });
+    const { entry, lifecycleAlerts, raisedAlertIds } = routed;
+    audit(req, 'monitoring.entry.create', 'MonitoringEntry', entry.id);
+    for (const clinicalAlert of lifecycleAlerts.filter((item) => raisedAlertIds.includes(item.id))) {
+      audit(req, 'clinical_alert.raise', 'ClinicalAlert', clinicalAlert.id, clinicalAlert.title);
+    }
+
+    const response = { ...entry, isCritical: assessment.isCritical, clinicalAlerts: lifecycleAlerts };
 
     // A critical reading is worth naming in the response so the ward gets an
     // immediate, specific prompt rather than a red cell they might scroll past.
     if (assessment.isCritical) {
       response.alert = {
+        id: lifecycleAlerts.find((item) => item.status === 'OPEN')?.id || null,
+        status: 'OPEN',
         severity: 'CRITICAL',
         message: `Critical: ${assessment.criticalKeys.join(', ')} — inform the doctor now`,
         fields: assessment.criticalKeys,

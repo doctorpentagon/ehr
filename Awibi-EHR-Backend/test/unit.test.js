@@ -9,6 +9,7 @@ const { normalisePhone, validateDateOfBirth, ageInYears } = require('../src/util
 const { deviationFor, computeDeviations, slidingScaleFor, ivFluidStatus } = require('../src/utils/monitoringTemplates');
 const { loadScout } = require('./helpers/scout');
 const { scoutIndex, scoutEntries, scoutSearch, scoutCalculate } = loadScout();
+const { tenant } = require('../src/middleware/tenant');
 
 
 test('UPIDs use the unambiguous AWB format', () => {
@@ -42,6 +43,42 @@ test('role permissions separate administration and clinical access', () => {
   assert.equal(can('CLINICIAN', 'DOCTOR', 'prescriptions_write'), true);
   assert.equal(can('CLINICIAN', 'NURSE', 'vitals_write'), true);
   assert.equal(can('CLINICIAN', 'NURSE', 'prescriptions_write'), false);
+  assert.equal(can('SUPER_ADMIN', null, 'platform'), true);
+  assert.equal(can('SUPER_ADMIN', null, 'patients'), false);
+  assert.equal(can('SUPER_ADMIN', null, 'cases'), false);
+  assert.equal(can('SUPER_ADMIN', null, 'billing'), false);
+});
+
+test('tenant middleware refuses platform operators even when a facility is attached', () => {
+  let statusCode = null;
+  let body = null;
+  let continued = false;
+  tenant(
+    { ctx: { role: 'SUPER_ADMIN', facilityId: '00000000-0000-0000-0000-000000000001' } },
+    { status(code) { statusCode = code; return this; }, json(value) { body = value; return this; } },
+    () => { continued = true; },
+  );
+  assert.equal(continued, false);
+  assert.equal(statusCode, 403);
+  assert.equal(body.code, 'PLATFORM_TENANT_ACCESS_DENIED');
+});
+
+test('tenant middleware accepts ordinary facility staff and refuses missing context', () => {
+  let continued = false;
+  tenant(
+    { ctx: { role: 'ADMIN', facilityId: '00000000-0000-0000-0000-000000000001' } },
+    { status() { return this; }, json() { return this; } },
+    () => { continued = true; },
+  );
+  assert.equal(continued, true);
+
+  let statusCode = null;
+  tenant(
+    { ctx: { role: 'ADMIN', facilityId: null } },
+    { status(code) { statusCode = code; return this; }, json() { return this; } },
+    () => assert.fail('missing facility context must not continue'),
+  );
+  assert.equal(statusCode, 403);
 });
 
 test('permission snapshots contain sub-role additions', () => {
@@ -51,6 +88,21 @@ test('permission snapshots contain sub-role additions', () => {
   assert.equal(nurse.vitals_write, 1);
   assert.equal(nurse.clinical_write, undefined);
   assert.equal(nurse.staff, undefined);
+});
+
+test('diagnostic specialists process only while doctors order and review', () => {
+  assert.equal(can('CLINICIAN', 'DOCTOR', 'diagnostic_order'), true);
+  assert.equal(can('CLINICIAN', 'DOCTOR', 'diagnostic_process'), false);
+  assert.equal(can('CLINICIAN', 'DOCTOR', 'clinical_write'), true);
+
+  for (const specialist of [
+    'LAB', 'RADIOLOGIST', 'RADIOGRAPHER', 'HAEMATOLOGIST',
+    'CHEMICAL_PATHOLOGIST', 'HISTOPATHOLOGIST', 'MICROBIOLOGIST',
+  ]) {
+    assert.equal(can('CLINICIAN', specialist, 'diagnostic_process'), true, specialist);
+    assert.equal(can('CLINICIAN', specialist, 'diagnostic_order'), false, specialist);
+    assert.equal(can('CLINICIAN', specialist, 'clinical_write'), false, specialist);
+  }
 });
 
 test('mail HTML escaping blocks markup and attribute injection', () => {

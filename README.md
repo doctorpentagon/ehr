@@ -1,8 +1,10 @@
 # Awibi EHR — Technical Documentation
 
-> Mobile-first Electronic Health Records platform for Nigerian healthcare facilities. NDPA 2023 compliant.
+> Mobile-first Electronic Health Records platform for Nigerian healthcare facilities. Designed toward NDPA 2023 alignment; compliance is not self-certified and remains subject to DPIA, legal review, deployment verification, operating procedures, and independent assurance.
 
-**Stack:** React 18 · Vite 5 · Node.js · Express · Prisma · Supabase PostgreSQL · JWT · Google OAuth · Paystack
+**Stack:** React · Vite · Node.js · Express · Prisma · PostgreSQL · JWT · Google OAuth · Paystack
+
+**Release position (23 August 2026):** suitable for controlled, synthetic-data beta testing only. It is not approved for real patient data, national deployment, full offline clinical use, or a claim of complete interoperability. See [PRE_BETA_RELEASE_GATE_2026-08-23.md](PRE_BETA_RELEASE_GATE_2026-08-23.md), [BETA_FEEDBACK_MASTER_CHECKLIST.md](BETA_FEEDBACK_MASTER_CHECKLIST.md), and `MANUAL_SETUP_REQUIRED.txt`.
 
 ---
 
@@ -29,16 +31,14 @@
 
 ## Architecture
 
-Awibi EHR is a **multi-service monorepo**. Three independent services communicate over HTTP. The frontend proxies all `/v1/*` requests to the EHR Backend via Vite's dev server — no CORS configuration needed in development.
+Awibi EHR and Awibi Identity are separate products. They communicate over an authenticated service boundary and must keep separate databases, secrets, sessions, and user experiences. This Git repository contains the EHR application; the local Identity folders are intentionally ignored because Identity is maintained as its own product/repository.
 
 ```
 Browser (5177)
-   │
-   ├─ /v1/* → EHR Backend (8000) ─── Supabase DB (sgdmiwfvqwgxzhnwekul)
-   │                │
-   │                └─ server-to-server → Identity Backend (8001) ─── Supabase DB (doteitlmckzcqcijtvdv)
-   │
-   └─ Direct → Landing Page (5176)
+   └─ /v1/* → EHR Backend (8000) ─── EHR PostgreSQL
+                         │
+                         └─ consented service exchange → Identity Backend (8001)
+                                                               └─ Identity PostgreSQL
 
 Identity Frontend (5178) → Identity Backend (8001)
 ```
@@ -49,8 +49,8 @@ Identity Frontend (5178) → Identity Backend (8001)
 
 | Service | Folder | Port | Tech |
 |---------|--------|------|------|
-| **EHR Backend** | `Awibi-EHR-Backend/` | **8000** | Node.js · Express · Prisma · Supabase |
-| **Identity Backend** | `Awibi-Identity-Backend/` | **8001** | Node.js · Express · Prisma · Supabase |
+| **EHR Backend** | `Awibi-EHR-Backend/` | **8000** | Node.js · Express · Prisma · PostgreSQL |
+| **Identity Backend** | `Awibi-Identity-Backend/` | **8001** | Separate product; local development copy may be present |
 | **EHR Frontend** | `Awibi-EHR-Frontend/` | **5177** | React 18 · Vite 5 · Tailwind · Redux · Zustand |
 | **Identity Frontend** | `Awibi-Identity-Frontend/` | **5178** | React 18 · Vite 5 · Tailwind |
 | **Landing Page** | `Awibi-EHR-Landing-main/` | **5176** | React 18 · Vite 5 · Tailwind |
@@ -64,7 +64,7 @@ Identity Frontend (5178) → Identity Backend (8001)
 ## Prerequisites
 
 - Node.js ≥ 18 · npm ≥ 9
-- Active [Supabase](https://app.supabase.com) account (2 projects, one per backend)
+- PostgreSQL 14+ for each backend; never share one production database/account between EHR and Identity
 - Google Cloud Console account (for Google OAuth)
 - Gmail account with App Password enabled
 - Cloudinary account (for file/photo uploads)
@@ -76,14 +76,9 @@ Identity Frontend (5178) → Identity Backend (8001)
 
 > These cannot be automated. Complete all steps before first run.
 
-### 1. Restore Supabase Projects (if paused)
+### 1. Confirm PostgreSQL availability
 
-Free-tier Supabase projects auto-pause after 1 week of inactivity. Symptoms: `P1001: Can't reach database`.
-
-1. Go to [app.supabase.com](https://app.supabase.com)
-2. Open project `sgdmiwfvqwgxzhnwekul` (EHR) → click **Restore project**
-3. Open project `doteitlmckzcqcijtvdv` (Identity) → click **Restore project**
-4. Wait ~2 minutes for both to fully restore
+Local launch scripts use local/private environment configuration. Hosted environments may use Render PostgreSQL, Supabase PostgreSQL, or another supported PostgreSQL service; Prisma is the ORM, not the database. Confirm connectivity, backups, encryption, restore testing, and separate EHR/Identity credentials before applying migrations.
 
 ### 2. Push Database Schema (first time only)
 
@@ -152,6 +147,11 @@ cd Awibi-EHR-Landing-main && npm install && npm run dev
 
 Or use `start-all.ps1` which opens all 5 in separate PowerShell windows.
 
+For Android testing, connect the phone to the same Wi-Fi as this computer and
+run `start-all.ps1`. The launcher binds the EHR frontend to the LAN and prints
+the exact `http://<computer-ip>:5177` address to open on the phone. The phone
+must use that address, not `localhost` (which would mean the phone itself).
+
 ---
 
 ## Demo Credentials
@@ -173,7 +173,7 @@ demonstrated rather than asserted: sign in there and none of UCH Ibadan's
 records are reachable, by listing or by direct id. `npm run test:tenancy`
 checks exactly that.
 
-### Passwordless entry, and the two gates that allow it
+### Passwordless entry and its safety gates
 
 Evaluators should not be handed a password, and a mock super-user with
 authorisation switched off would demonstrate nothing — the isolation and role
@@ -190,15 +190,13 @@ separate gates that cannot be enabled by accident:
 | **Local only** | `LOCAL_DEMO_ACCESS` | `true` — injected only by `scripts/run-local.js`. The server exits at startup if this is ever set with `NODE_ENV=production`. |
 | **Hosted evaluation** | `DEMO_MODE` | `true` |
 | | `DEMO_MODE_ACKNOWLEDGED` | `i-understand-anyone-with-the-url-can-sign-in` |
+| | `DEMO_ACCESS_CODE` | A unique value of at least 16 characters, shared privately with named testers |
 
-The acknowledgement string is deliberately a sentence rather than a flag. Both
-must be present; setting `DEMO_MODE` alone does nothing.
-
-Optionally set **`DEMO_ACCESS_CODE`** to any value and evaluators must enter it
-once before the picker will sign them in. The API advertises this to the login
-page, which renders the field only when a code is actually required — so if you
-set it, **share it with your testers**, or the picker will list accounts and
-refuse every one of them.
+The acknowledgement string is deliberately a sentence rather than a flag.
+Hosted demo startup refuses to continue unless all three hosted conditions are
+present and the access code is at least 16 characters. Evaluators must enter
+that code before the picker signs them in. Use invented records only: this is a
+beta convenience, not an authentication mode for live clinical data.
 
 None of this weakens the real login, which continues to work unchanged
 alongside it.
@@ -400,6 +398,7 @@ POST /v1/identity/verify-nin
 - Every clinical route: `authenticate → tenant → requirePermission`
 - Tenant scoping prevents cross-facility data access
 - Frontend mirrors backend permissions — URL and API both enforce
+- Awibi `SUPER_ADMIN` is a platform operator, not a hospital super-user; tenant middleware refuses that role on all facility clinical routes
 
 ### Rate Limiting
 | Route | Limit |
@@ -417,10 +416,10 @@ POST /v1/identity/verify-nin
 - Helmet middleware — secure HTTP headers (CSP, HSTS, etc.)
 - Paystack webhooks: HMAC-SHA512 signature verified
 
-### NDPA 2023 Compliance
-- `AuditLog` records every patient data access
-- `ConsentGrant` model tracks patient consent
-- Identity Access Log — patients can see who accessed their record
+### NDPA 2023 alignment status
+- `ConsentGrant`, Identity access receipts, selected clinical-write audit events, role enforcement, and facility scoping are implemented controls.
+- Complete read-access auditing, data inventory, purpose/retention mapping, data-subject procedures, breach response, DPIA, processor contracts, deployment encryption verification, and independent legal/security review remain open release gates.
+- The codebase and a checklist do not by themselves establish legal compliance or certification.
 
 ### Anti-Patterns Prevented
 - Demo credentials never shown in UI
@@ -640,7 +639,8 @@ must be acted on is an Order.
 
 See **[NOT_BUILT.md](NOT_BUILT.md)** for the full checkable list. Summary:
 
-- Pharmacy module (no model, routes, or page)
+- Pharmacy workbench is not built: prescriptions and medication administration exist, but formulary inventory, stock ledger, verification and dispensing do not
+- Facility equipment/instrument asset register is not built
 - Patient self-booking from Identity Portal
 - Playwright / Cypress end-to-end tests — the browser layer is the one substantial untested surface
 - WHO growth reference tables — Z-scores return `null` rather than a wrong number
@@ -708,4 +708,4 @@ first. Three consecutive full runs now give identical results.
 
 ---
 
-*Awibi EHR · Built July–August 2026 · NDPA 2023 compliant*
+*Awibi EHR · Built July–August 2026 · designed toward NDPA 2023 alignment; not self-certified*

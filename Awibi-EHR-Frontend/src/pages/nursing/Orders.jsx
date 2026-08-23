@@ -4,6 +4,7 @@ import { Plus, AlertTriangle, Check, X, Pause, Play, Search } from 'lucide-react
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 import { useSelector } from 'react-redux';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../lib/api';
 import Spinner from '../../components/ui/Spinner';
 import { can } from '../../lib/permissions';
@@ -16,7 +17,10 @@ import { can } from '../../lib/permissions';
  * twelve times or once, and only the execution count tells them apart.
  */
 
-const ORDER_TYPES = ['MEDICATION', 'NURSING', 'DIET', 'ACTIVITY', 'TREATMENT', 'LAB', 'IMAGING'];
+// Medication and diagnostics have their own audited workflows (MAR/pharmacy
+// and the diagnostic catalogue). A generic standing order must never bypass
+// dose verification, specimen tracking, reference ranges, or critical alerts.
+const ORDER_TYPES = ['NURSING', 'DIET', 'ACTIVITY', 'TREATMENT'];
 
 // Common nursing instructions, so the frequent case is two taps rather than typing.
 const COMMON_NURSING = [
@@ -30,10 +34,10 @@ const COMMON_NURSING = [
   { name: 'Pressure area check', frequencyHours: 4, goal: 'Prevent pressure ulcer' },
 ];
 
-function OrderForm({ patients, onClose }) {
+function OrderForm({ patients, onClose, initialPatientId = '' }) {
   const qc = useQueryClient();
   const [form, setForm] = useState({
-    patientId: '', type: 'NURSING', name: '', goal: '',
+    patientId: initialPatientId, type: 'NURSING', name: '', goal: '',
     frequencyHours: '', priority: 'ROUTINE', instructions: '',
   });
   const [patientQuery, setPatientQuery] = useState('');
@@ -252,7 +256,9 @@ function ExecuteDialog({ order, onClose }) {
 
 export default function Orders() {
   const qc = useQueryClient();
-  const [showForm, setShowForm] = useState(false);
+  const [searchParams] = useSearchParams();
+  const presetPatientId = searchParams.get('patientId') || '';
+  const [showForm, setShowForm] = useState(searchParams.get('new') === '1');
   const [executing, setExecuting] = useState(null);
   const [overdueOnly, setOverdueOnly] = useState(false);
 
@@ -397,7 +403,7 @@ export default function Orders() {
         ))
       )}
 
-      {showForm && <OrderForm patients={patients || []} onClose={() => setShowForm(false)} />}
+      {showForm && <OrderForm patients={patients || []} initialPatientId={presetPatientId} onClose={() => setShowForm(false)} />}
       {executing && <ExecuteDialog order={executing} onClose={() => setExecuting(null)} />}
     </div>
   );

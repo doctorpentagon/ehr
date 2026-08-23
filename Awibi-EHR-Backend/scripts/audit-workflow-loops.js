@@ -108,8 +108,20 @@ const step = (loop, label, passed, detail = '') => {
   step('monitoring', 'a critical reading is graded on the server',
     entry.d?.deviations?.volumeMl?.severity === 'CRITICAL_LOW');
   const alerts = await call('GET', '/alerts', T.doctor);
+  const criticalAlert = alerts.d?.alerts?.find((a) => a.category === 'OBSERVATION'
+    && a.severity === 'CRITICAL' && a.link?.includes(sheet.d?.sheet?.id));
   step('monitoring', 'it raises an alert for the doctor',
-    alerts.d?.alerts?.some((a) => a.category === 'OBSERVATION' && a.severity === 'CRITICAL'));
+    Boolean(criticalAlert));
+  const acknowledged = await call('POST', `/alerts/${criticalAlert?.id}/acknowledge`, T.doctor, {});
+  step('monitoring', 'a named doctor acknowledges the alert', acknowledged.d?.status === 'ACKNOWLEDGED');
+  const acted = await call('POST', `/alerts/${criticalAlert?.id}/action`, T.doctor, {
+    actionNote: 'Reviewed the patient and requested an immediate repeat urine output measurement.',
+  });
+  step('monitoring', 'the doctor records the action taken', acted.d?.status === 'ACTED_ON');
+  const resolvedAlert = await call('POST', `/alerts/${criticalAlert?.id}/resolve`, T.doctor, {
+    resolution: 'Repeat assessment completed; continuing hourly monitoring under the ward plan.',
+  });
+  step('monitoring', 'the doctor records an outcome before closure', resolvedAlert.d?.status === 'RESOLVED');
   const review = await call('POST', `/nursing/monitoring-sheets/${sheet.d?.sheet?.id}/reviews`, T.doctor, {
     kind: 'CORRECTION_REQUESTED', comment: 'Please recheck against the meter',
   });
@@ -123,14 +135,27 @@ const step = (loop, label, passed, detail = '') => {
 
   // ── 5. Diagnostics: request → result → doctor sees it ────────────────────
   console.log('\n  5. DIAGNOSTICS');
+  const catalogue = await call('GET', '/lab/catalogue?testType=LAB&search=Potassium', T.doctor);
+  const potassium = catalogue.d?.tests?.find((test) => test.referenceHigh != null) || catalogue.d?.tests?.[0];
   const lab = await call('POST', '/lab', T.doctor, {
-    patientId: patient.id, testName: 'Loop audit potassium', testType: 'LAB', priority: 'URGENT',
+    patientId: patient.id,
+    catalogueTestId: potassium?.id,
+    testName: potassium?.name || 'Loop audit potassium',
+    testType: 'LAB',
+    priority: 'URGENT',
   });
   step('diagnostics', 'a doctor can request a test', lab.status === 201);
   step('diagnostics', 'it appears in the diagnostics queue',
     (await call('GET', '/lab?status=PENDING', T.lab)).d?.requests?.some((r) => r.id === lab.d?.id));
+  const collected = await call('POST', `/lab/${lab.d?.id}/status`, T.lab, {
+    status: 'COLLECTED', specimenId: `LOOP-${Date.now()}`,
+  });
+  step('diagnostics', 'the specimen is collected by diagnostics', collected.status === 200 && collected.d?.status === 'COLLECTED');
+  const processing = await call('POST', `/lab/${lab.d?.id}/status`, T.lab, { status: 'IN_PROGRESS' });
+  step('diagnostics', 'the received specimen enters processing', processing.status === 200 && processing.d?.status === 'IN_PROGRESS');
   const result = await call('PUT', `/lab/${lab.d?.id}/result`, T.lab, {
-    status: 'COMPLETED', resultValue: 7.2, resultUnit: 'mmol/L', referenceLow: 3.5, referenceHigh: 5.1,
+    resultValue: 7.2,
+    result: 'Loop audit: potassium 7.2 mmol/L',
   });
   step('diagnostics', 'diagnostics can enter a result', result.status === 200);
   step('diagnostics', 'an out-of-range result is flagged',
@@ -177,7 +202,7 @@ const step = (loop, label, passed, detail = '') => {
   // ── 8. Public enquiry → records queue → registration ─────────────────────
   console.log('\n  8. PUBLIC ENQUIRY');
   const slug = (await (await fetch(`${B}/public/clinics`)).json()).clinics?.find((c) => c.slug?.includes('uch'))?.slug;
-  const ip = `2001:db8:aud:${Date.now().toString(16)}::1`;
+  const ip = `2001:db8:a0d:${Date.now().toString(16)}::1`;
   const enq = await fetch(`${B}/public/clinic/${slug}/inquiry`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'x-forwarded-for': ip },
     body: JSON.stringify({ name: 'Loop Enquiry', phone: '08033332222', symptoms: 'chest pain and sweating' }),

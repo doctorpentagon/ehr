@@ -3,6 +3,7 @@ import { WifiOff, Wifi, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { getCount } from '@/lib/offlineQueue';
 import { syncOfflineQueue } from '@/lib/syncQueue';
+import { currentOfflineOwnerKey } from '@/lib/offlinePolicy';
 
 export default function OfflineBanner() {
   const [online, setOnline] = useState(navigator.onLine);
@@ -11,7 +12,7 @@ export default function OfflineBanner() {
   const [syncing, setSyncing] = useState(false);
 
   const refreshCount = useCallback(async () => {
-    try { setPending(await getCount()); } catch (_) {}
+    try { setPending(await getCount(currentOfflineOwnerKey())); } catch (_) {}
   }, []);
 
   const runSync = useCallback(async () => {
@@ -44,7 +45,7 @@ export default function OfflineBanner() {
     window.addEventListener('offline', goOffline);
 
     // Listen for SW background-sync trigger
-    const onMessage = (e) => { if (e.data?.type === 'SYNC_QUEUE') runSync(); };
+    const onMessage = (e) => { if (e.data?.type === 'awibi-flush-queue') runSync(); };
     navigator.serviceWorker?.addEventListener('message', onMessage);
 
     // Refresh count every 30s while offline to reflect newly queued items

@@ -18,7 +18,7 @@ const TABS = [
 
 export default function Settings() {
   const { user } = useSelector((s) => s.auth);
-  const canEditFacility = ['SUPER_ADMIN','ADMIN'].includes(user?.role);
+  const canEditFacility = user?.role === 'ADMIN';
   const passwordChangeRequired = Boolean(user?.mustChangePassword);
   const [tab, setTab] = useState(passwordChangeRequired ? 'security' : (canEditFacility ? 'facility' : 'profile'));
 
@@ -210,13 +210,13 @@ function SecuritySettings({ passwordChangeRequired }) {
       </form>
 
       <div className="mt-6 border-t border-gray-100 pt-5">
-        <h3 className="text-sm font-semibold text-gray-900 mb-3">NDPA 2023 Compliance</h3>
+        <h3 className="text-sm font-semibold text-gray-900 mb-3">Security and compliance status</h3>
         <div className="space-y-2 text-xs text-gray-600">
-          <div className="flex items-center gap-2"><CheckCircle size={14} className="text-green-600" /> All PHI access is logged with timestamp and user ID</div>
-          <div className="flex items-center gap-2"><CheckCircle size={14} className="text-green-600" /> No PHI stored in URLs or logs</div>
-          <div className="flex items-center gap-2"><CheckCircle size={14} className="text-green-600" /> Data encrypted in transit (TLS)</div>
-          <div className="flex items-center gap-2"><CheckCircle size={14} className="text-green-600" /> Consent recorded at patient registration</div>
-          <div className="flex items-center gap-2"><CheckCircle size={14} className="text-green-600" /> NDPA 2023 provisions complied with</div>
+          <div className="flex items-center gap-2"><CheckCircle size={14} className="text-green-600" /> Role and facility boundaries are enforced by the API.</div>
+          <div className="flex items-center gap-2"><CheckCircle size={14} className="text-green-600" /> Signed clinical notes retain named author and event time.</div>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+            Selected writes and platform views are audited. Complete read-access auditing, DPIA, retention/deletion procedures, incident response, independent security testing, and legal compliance review remain release gates. TLS and encryption at rest must also be verified in the deployed environment. Awibi does not claim certification from this screen.
+          </div>
         </div>
       </div>
     </div>

@@ -9,10 +9,11 @@ import { logout } from '@/store/authSlice';
 import api from '@/lib/api';
 import { roleLabel } from '@/lib/permissions';
 
-export default function TopBar({ onMenuClick }) {
+export default function TopBar({ onMenuClick, onSidebarToggle, sidebarCollapsed }) {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const { user } = useSelector((s) => s.auth);
+  const isPlatformOperator = user?.role === 'SUPER_ADMIN';
   const [dropOpen, setDropOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [searchVal, setSearchVal] = useState('');
@@ -24,12 +25,14 @@ export default function TopBar({ onMenuClick }) {
     queryKey: ['notif-appts'],
     queryFn: () => api.get('/appointments', { params: { date: today, limit: 5 } }).then(r => r.data),
     staleTime: 60000,
+    enabled: !isPlatformOperator,
   });
 
   const { data: labData } = useQuery({
     queryKey: ['notif-lab'],
     queryFn: () => api.get('/lab', { params: { status: 'PENDING', limit: 5 } }).then(r => r.data),
     staleTime: 60000,
+    enabled: !isPlatformOperator,
   });
 
   // Polled rather than pushed. A colleague waiting on an answer should not have
@@ -40,6 +43,7 @@ export default function TopBar({ onMenuClick }) {
     queryFn: () => api.get('/messages/unread-count').then(r => r.data),
     refetchInterval: 60000,
     staleTime: 30000,
+    enabled: !isPlatformOperator,
   });
 
   const todayAppts = (apptData?.appointments || apptData || []).filter(a => a.status === 'SCHEDULED' || a.status === 'CONFIRMED');
@@ -76,13 +80,22 @@ export default function TopBar({ onMenuClick }) {
       {/* Mobile menu */}
       <button
         onClick={onMenuClick}
-        className="md:hidden text-muted-foreground hover:text-foreground transition-colors"
+        aria-label="Open navigation"
+        className="md:hidden min-h-11 min-w-11 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
       >
         <IconMenu2 className="size-6" />
       </button>
+      <button
+        onClick={onSidebarToggle}
+        aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+        title={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+        className="hidden md:flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+      >
+        <IconMenu2 className="size-5" />
+      </button>
 
       {/* Search */}
-      <div className="flex-1 max-w-md relative hidden sm:block">
+      {!isPlatformOperator && <div className="flex-1 max-w-md relative hidden sm:block">
         <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
         <input
           type="text"
@@ -92,13 +105,13 @@ export default function TopBar({ onMenuClick }) {
           onKeyDown={handleSearch}
           className="w-full pl-9 pr-4 h-9 text-sm border border-input rounded-md bg-muted/40 focus:outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground"
         />
-      </div>
+      </div>}
 
       <div className="flex-1" />
 
       {/* Messages from colleagues. Separate from notifications because a person
           waiting on an answer is different from a system event. */}
-      <button
+      {!isPlatformOperator && <button
         onClick={() => navigate('/dashboard/messages')}
         title={messageCount?.unread ? `${messageCount.unread} unread message${messageCount.unread === 1 ? '' : 's'}` : 'Messages'}
         className="relative text-muted-foreground hover:text-foreground transition-colors p-1.5"
@@ -109,10 +122,10 @@ export default function TopBar({ onMenuClick }) {
             {messageCount.unread > 9 ? '9+' : messageCount.unread}
           </span>
         )}
-      </button>
+      </button>}
 
       {/* Notifications */}
-      <div className="relative" ref={notifRef}>
+      {!isPlatformOperator && <div className="relative" ref={notifRef}>
         <button
           onClick={() => { setNotifOpen(o => !o); setDropOpen(false); }}
           className="relative text-muted-foreground hover:text-foreground transition-colors p-1.5"
@@ -195,7 +208,7 @@ export default function TopBar({ onMenuClick }) {
             </div>
           </div>
         )}
-      </div>
+      </div>}
 
       {/* User dropdown */}
       <div className="relative">

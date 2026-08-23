@@ -2,9 +2,9 @@
  * Seed the diagnostics catalogue (laboratory + imaging) for local demo
  * facilities. Idempotent — safe to re-run.
  *
- * Reference ranges are standard adult values in common Nigerian laboratory use.
- * Critical thresholds are the values that should trigger an immediate call to
- * the ordering clinician.
+ * Values below are synthetic local-beta defaults, not a clinical reference
+ * standard. Every deploying facility must approve method-, analyser-, age- and
+ * sex-appropriate ranges and critical-call thresholds before real-patient use.
  *
  * Run: node scripts/run-local.js scripts/seed-diagnostics-catalogue.js
  */
@@ -34,6 +34,23 @@ const CATALOGUE = [
     unit: null, resultKind: 'TEXT', price: 2000, turnaroundHours: 2 },
   { name: 'Urine MCS', testType: 'LAB', category: 'Microbiology', specimenType: 'Mid-stream urine',
     unit: null, resultKind: 'TEXT', price: 5000, turnaroundHours: 72 },
+  { name: 'Blood Culture and Sensitivity', testType: 'LAB', category: 'Microbiology', specimenType: 'Blood culture bottles',
+    unit: null, resultKind: 'TEXT', price: 12000, turnaroundHours: 120 },
+  { name: 'Sputum MCS', testType: 'LAB', category: 'Microbiology', specimenType: 'Sputum',
+    unit: null, resultKind: 'TEXT', price: 6000, turnaroundHours: 72 },
+  { name: 'Stool MCS', testType: 'LAB', category: 'Microbiology', specimenType: 'Stool',
+    unit: null, resultKind: 'TEXT', price: 6000, turnaroundHours: 72 },
+
+  // Histopathology / morbid anatomy. No universal turnaround or reference
+  // interval is implied; the specialist issues a narrative report.
+  { name: 'Surgical Biopsy Histology', testType: 'LAB', category: 'Histopathology', specimenType: 'Formalin-fixed tissue',
+    unit: null, resultKind: 'REPORT', price: 25000, turnaroundHours: 168 },
+  { name: 'Cytology', testType: 'LAB', category: 'Histopathology', specimenType: 'Cytology specimen',
+    unit: null, resultKind: 'REPORT', price: 18000, turnaroundHours: 120 },
+  { name: 'Cervical Cytology (Pap Smear)', testType: 'LAB', category: 'Histopathology', specimenType: 'Cervical sample',
+    unit: null, resultKind: 'REPORT', price: 15000, turnaroundHours: 120 },
+  { name: 'Post-mortem Examination', testType: 'OTHER', category: 'Morbid Anatomy', specimenType: 'Post-mortem examination',
+    unit: null, resultKind: 'REPORT', price: 0, turnaroundHours: 336 },
 
   // ── Chemistry ─────────────────────────────────────────────────────────────
   { name: 'Fasting Blood Sugar', code: 'FBS', testType: 'LAB', category: 'Chemistry', specimenType: 'Fluoride oxalate',
@@ -50,6 +67,12 @@ const CATALOGUE = [
     unit: 'mmol/L', referenceLow: 135, referenceHigh: 145, criticalLow: 120, criticalHigh: 160, price: 3000, turnaroundHours: 4 },
   { name: 'Liver Function Test', code: 'LFT', testType: 'LAB', category: 'Chemistry', specimenType: 'Serum',
     unit: null, resultKind: 'TEXT', price: 9000, turnaroundHours: 24 },
+  { name: 'Renal Function Test', code: 'RFT', testType: 'LAB', category: 'Chemistry', specimenType: 'Serum',
+    unit: null, resultKind: 'TEXT', price: 9000, turnaroundHours: 24 },
+  { name: 'Lipid Profile', testType: 'LAB', category: 'Chemistry', specimenType: 'Serum',
+    unit: null, resultKind: 'TEXT', price: 8000, turnaroundHours: 24 },
+  { name: 'Thyroid Function Test', code: 'TFT', testType: 'LAB', category: 'Chemical Pathology', specimenType: 'Serum',
+    unit: null, resultKind: 'TEXT', price: 18000, turnaroundHours: 48 },
 
   // ── Imaging (same catalogue: every facility has a lab and imaging side) ───
   { name: 'Chest X-Ray', code: 'CXR', testType: 'IMAGING', category: 'Radiology',
@@ -62,8 +85,24 @@ const CATALOGUE = [
     resultKind: 'REPORT', price: 10000, turnaroundHours: 4 },
   { name: 'CT Scan (Brain)', testType: 'IMAGING', category: 'Radiology',
     resultKind: 'REPORT', price: 85000, turnaroundHours: 24 },
+  { name: 'CT Scan (Chest)', testType: 'IMAGING', category: 'Radiology',
+    resultKind: 'REPORT', price: 95000, turnaroundHours: 24 },
+  { name: 'CT Scan (Abdomen and Pelvis)', testType: 'IMAGING', category: 'Radiology',
+    resultKind: 'REPORT', price: 110000, turnaroundHours: 24 },
+  { name: 'CT Angiography', testType: 'IMAGING', category: 'Radiology',
+    resultKind: 'REPORT', price: 150000, turnaroundHours: 48 },
   { name: 'MRI (Lumbar Spine)', testType: 'IMAGING', category: 'Radiology',
     resultKind: 'REPORT', price: 150000, turnaroundHours: 48 },
+  { name: 'MRI (Brain)', testType: 'IMAGING', category: 'Radiology',
+    resultKind: 'REPORT', price: 180000, turnaroundHours: 48 },
+  { name: 'Mammography', testType: 'IMAGING', category: 'Radiology',
+    resultKind: 'REPORT', price: 30000, turnaroundHours: 24 },
+  { name: 'Doppler Ultrasound', testType: 'IMAGING', category: 'Radiology',
+    resultKind: 'REPORT', price: 30000, turnaroundHours: 24 },
+  { name: 'X-Ray (Skeletal)', testType: 'IMAGING', category: 'Radiology',
+    resultKind: 'REPORT', price: 9000, turnaroundHours: 4 },
+  { name: 'Fluoroscopy Study', testType: 'IMAGING', category: 'Radiology',
+    resultKind: 'REPORT', price: 40000, turnaroundHours: 24 },
   { name: 'ECG', testType: 'ECG', category: 'Cardiology',
     resultKind: 'REPORT', price: 7000, turnaroundHours: 1 },
   { name: 'Echocardiography', testType: 'IMAGING', category: 'Cardiology',

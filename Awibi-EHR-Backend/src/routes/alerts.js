@@ -4,88 +4,86 @@ const router = express.Router();
 const { prisma } = require('../utils/database');
 const { authenticate } = require('../middleware/auth');
 const { tenant } = require('../middleware/tenant');
+const { requirePermission } = require('../middleware/rbac');
 const { can } = require('../utils/permissions');
 
-/**
- * The things in this facility that somebody should look at now.
- *
- * Derived on read rather than stored as notification rows. A stored alert has to
- * be created, delivered, de-duplicated and expired, and it goes stale the moment
- * the underlying fact changes — a critical potassium that has since been treated
- * still sits in the queue looking urgent. Deriving from current state means an
- * alert disappears exactly when the thing it describes is dealt with, which is
- * the behaviour a ward actually wants.
- *
- * Filtered by role: a nurse is shown the bag that needs changing, a doctor the
- * reading that needs a decision. Nobody is shown work they cannot act on.
- */
 const auth = [authenticate, tenant];
+const respondToAlert = [authenticate, tenant, requirePermission('clinical_write')];
 
-/** How far back a reading still counts as "current". */
-const LOOKBACK_HOURS = 12;
+function audit(req, action, resourceId, reason) {
+  prisma.auditLog.create({
+    data: {
+      facilityId: req.ctx.facilityId,
+      userId: req.ctx.userId,
+      action,
+      resource: 'ClinicalAlert',
+      resourceId,
+      reason,
+      ip: req.ip,
+    },
+  }).catch(() => {});
+}
 
+/**
+ * Facility work that needs attention now.
+ *
+ * Most operational prompts are derived from current state. Critical observations
+ * are different: they are durable safety episodes which require a named clinician
+ * to acknowledge, record action and explicitly resolve them.
+ */
 router.get('/', auth, async (req, res, next) => {
   try {
     const facilityId = req.ctx.facilityId;
     const { role, subRole } = req.user || {};
-    const since = new Date(Date.now() - LOOKBACK_HOURS * 3600_000);
-
     const isNurse = subRole === 'NURSE';
     const isDoctor = subRole === 'DOCTOR';
     const isClinical = isNurse || isDoctor;
     const seesAdmin = can(role, subRole, 'patient_demographics_write');
-
     const alerts = [];
 
-    // ── Critical observations ────────────────────────────────────────────────
     if (can(role, subRole, 'monitoring')) {
-      const entries = await prisma.monitoringEntry.findMany({
-        where: { facilityId, isAbnormal: true, recordedAt: { gte: since } },
-        orderBy: { recordedAt: 'desc' },
+      const clinicalAlerts = await prisma.clinicalAlert.findMany({
+        where: { facilityId, status: { in: ['OPEN', 'ACKNOWLEDGED', 'ACTED_ON'] } },
+        orderBy: { createdAt: 'asc' },
         take: 200,
-        include: {
-          sheet: {
-            select: {
-              id: true, title: true, type: true, status: true, fields: true,
-              patient: { select: { id: true, firstName: true, lastName: true, mrn: true } },
-            },
-          },
-        },
       });
+      const patientIds = [...new Set(clinicalAlerts.map((item) => item.patientId))];
+      const patients = patientIds.length > 0
+        ? await prisma.patient.findMany({
+          where: { facilityId, id: { in: patientIds } },
+          select: { id: true, firstName: true, lastName: true, mrn: true },
+        })
+        : [];
+      const patientById = new Map(patients.map((patient) => [patient.id, patient]));
 
-      // Only the latest critical reading per patient and measurement. Ten
-      // consecutive low saturations are one problem, not ten alerts — and a
-      // list that scrolls is a list nobody reads.
-      const seen = new Set();
-      for (const entry of entries) {
-        if (entry.sheet?.status !== 'ACTIVE') continue;
-        for (const [key, dev] of Object.entries(entry.deviations || {})) {
-          if (!dev?.isCritical) continue;
-          const dedupe = `${entry.sheet.patient?.id}:${key}`;
-          if (seen.has(dedupe)) continue;
-          seen.add(dedupe);
-
-          // Show the label the nurse charted against, not the storage key —
-          // "SpO2 is critical" rather than "spo2 is critical".
-          const field = (Array.isArray(entry.sheet.fields) ? entry.sheet.fields : []).find((f) => f.key === key);
-          const label = field?.label || key;
-          const unit = field?.unit ? ` ${field.unit}` : '';
-
-          alerts.push({
-            id: `critical:${entry.id}:${key}`,
-            severity: 'CRITICAL',
-            category: 'OBSERVATION',
-            title: `${label} is critical`,
-            detail: `${entry.values?.[key]}${unit} recorded on ${entry.sheet.title}`,
-            patient: entry.sheet.patient,
-            at: entry.recordedAt,
-            link: `/dashboard/nursing/sheet/${entry.sheet.id}`,
-          });
-        }
+      for (const item of clinicalAlerts) {
+        alerts.push({
+          id: item.id,
+          lifecycleId: item.id,
+          persistent: true,
+          severity: item.severity,
+          category: item.category,
+          status: item.status,
+          title: item.title,
+          detail: item.detail,
+          latestValue: item.latestValue,
+          latestUnit: item.latestUnit,
+          normalizedAt: item.normalizedAt,
+          assignedToId: item.assignedToId,
+          acknowledgedAt: item.acknowledgedAt,
+          actionAt: item.actionAt,
+          actionNote: item.actionNote,
+          patient: patientById.get(item.patientId) || null,
+          at: item.createdAt,
+          link: item.sourceType === 'MONITORING'
+            ? `/dashboard/nursing/sheet/${item.sourceId}`
+            : item.sourceType === 'LAB_REQUEST'
+              ? '/dashboard/lab'
+              : null,
+        });
       }
     }
 
-    // ── Overdue standing orders ──────────────────────────────────────────────
     if (can(role, subRole, 'orders')) {
       const orders = await prisma.order.findMany({
         where: { facilityId, status: 'ACTIVE', frequencyHours: { not: null } },
@@ -101,15 +99,13 @@ router.get('/', auth, async (req, res, next) => {
         const dueAt = new Date(new Date(from).getTime() + order.frequencyHours * 3600_000);
         const graceMs = order.frequencyHours * 3600_000 * 0.25;
         if (Date.now() <= dueAt.getTime() + graceMs) continue;
-
         const hoursLate = Math.round(((Date.now() - dueAt.getTime()) / 3600_000) * 10) / 10;
         alerts.push({
           id: `overdue:${order.id}`,
-          // An order an hour late is a prompt; a whole cycle late is a problem.
           severity: hoursLate > order.frequencyHours ? 'CRITICAL' : 'WARNING',
           category: 'ORDER',
           title: `${order.name} is overdue`,
-          detail: `Due every ${order.frequencyHours}h · ${hoursLate}h late`,
+          detail: `Due every ${order.frequencyHours}h - ${hoursLate}h late`,
           patient: order.patient,
           at: dueAt,
           link: '/dashboard/nursing/orders',
@@ -117,7 +113,6 @@ router.get('/', auth, async (req, res, next) => {
       }
     }
 
-    // ── Requests waiting on a nurse ──────────────────────────────────────────
     if (isNurse) {
       const reviews = await prisma.monitoringReview.findMany({
         where: { facilityId, resolvedAt: null, kind: { not: 'ACKNOWLEDGED' } },
@@ -126,7 +121,8 @@ router.get('/', auth, async (req, res, next) => {
         include: {
           sheet: {
             select: {
-              id: true, title: true,
+              id: true,
+              title: true,
               patient: { select: { id: true, firstName: true, lastName: true, mrn: true } },
             },
           },
@@ -137,7 +133,9 @@ router.get('/', auth, async (req, res, next) => {
           id: `review:${review.id}`,
           severity: 'WARNING',
           category: 'REVIEW',
-          title: review.kind === 'CORRECTION_REQUESTED' ? 'A doctor has asked for a recheck' : 'A doctor has asked to change the plan',
+          title: review.kind === 'CORRECTION_REQUESTED'
+            ? 'A doctor has asked for a recheck'
+            : 'A doctor has asked to change the plan',
           detail: review.comment,
           patient: review.sheet?.patient,
           at: review.raisedAt,
@@ -146,7 +144,6 @@ router.get('/', auth, async (req, res, next) => {
       }
     }
 
-    // ── Resuscitation in progress ────────────────────────────────────────────
     if (isClinical || can(role, subRole, 'emergency')) {
       const running = await prisma.resuscitationEvent.findMany({
         where: { facilityId, endedAt: null },
@@ -166,7 +163,6 @@ router.get('/', auth, async (req, res, next) => {
       }
     }
 
-    // ── Urgent public enquiries ──────────────────────────────────────────────
     if (seesAdmin) {
       const urgent = await prisma.patientInquiry.findMany({
         where: { facilityId, status: 'NEW', isUrgent: true },
@@ -187,19 +183,80 @@ router.get('/', auth, async (req, res, next) => {
       }
     }
 
-    // Critical first, then oldest — something ignored for six hours matters more
-    // than the same thing raised a minute ago.
     const rank = { CRITICAL: 0, WARNING: 1, INFO: 2 };
     alerts.sort((a, b) => (rank[a.severity] - rank[b.severity]) || (new Date(a.at) - new Date(b.at)));
-
     res.json({
       alerts,
       counts: {
         total: alerts.length,
-        critical: alerts.filter((a) => a.severity === 'CRITICAL').length,
-        warning: alerts.filter((a) => a.severity === 'WARNING').length,
+        critical: alerts.filter((item) => item.severity === 'CRITICAL').length,
+        warning: alerts.filter((item) => item.severity === 'WARNING').length,
       },
     });
+  } catch (e) { next(e); }
+});
+
+router.post('/:id/acknowledge', respondToAlert, async (req, res, next) => {
+  try {
+    const existing = await prisma.clinicalAlert.findFirst({
+      where: { id: req.params.id, facilityId: req.ctx.facilityId },
+    });
+    if (!existing) return res.status(404).json({ error: 'Clinical alert not found' });
+    if (existing.status !== 'OPEN') {
+      return res.status(409).json({ error: `Alert is already ${existing.status.toLowerCase().replace('_', ' ')}` });
+    }
+    const changed = await prisma.clinicalAlert.updateMany({
+      where: { id: existing.id, facilityId: req.ctx.facilityId, status: 'OPEN' },
+      data: { status: 'ACKNOWLEDGED', acknowledgedById: req.ctx.userId, acknowledgedAt: new Date() },
+    });
+    if (changed.count !== 1) return res.status(409).json({ error: 'This alert was updated by another clinician. Refresh to see its current state.' });
+    const alert = await prisma.clinicalAlert.findUnique({ where: { id: existing.id } });
+    audit(req, 'clinical_alert.acknowledge', alert.id, 'Clinician acknowledged critical alert');
+    res.json(alert);
+  } catch (e) { next(e); }
+});
+
+router.post('/:id/action', respondToAlert, async (req, res, next) => {
+  try {
+    const actionNote = String(req.body?.actionNote || '').trim();
+    if (actionNote.length < 3) return res.status(400).json({ error: 'Describe the clinical action taken' });
+    const existing = await prisma.clinicalAlert.findFirst({
+      where: { id: req.params.id, facilityId: req.ctx.facilityId },
+    });
+    if (!existing) return res.status(404).json({ error: 'Clinical alert not found' });
+    if (existing.status !== 'ACKNOWLEDGED') {
+      return res.status(409).json({ error: 'A clinician must acknowledge this alert before recording action' });
+    }
+    const changed = await prisma.clinicalAlert.updateMany({
+      where: { id: existing.id, facilityId: req.ctx.facilityId, status: 'ACKNOWLEDGED' },
+      data: { status: 'ACTED_ON', actionById: req.ctx.userId, actionAt: new Date(), actionNote },
+    });
+    if (changed.count !== 1) return res.status(409).json({ error: 'This alert was updated by another clinician. Refresh to see its current state.' });
+    const alert = await prisma.clinicalAlert.findUnique({ where: { id: existing.id } });
+    audit(req, 'clinical_alert.action', alert.id, actionNote);
+    res.json(alert);
+  } catch (e) { next(e); }
+});
+
+router.post('/:id/resolve', respondToAlert, async (req, res, next) => {
+  try {
+    const resolution = String(req.body?.resolution || '').trim();
+    if (resolution.length < 3) return res.status(400).json({ error: 'Describe the outcome before resolving the alert' });
+    const existing = await prisma.clinicalAlert.findFirst({
+      where: { id: req.params.id, facilityId: req.ctx.facilityId },
+    });
+    if (!existing) return res.status(404).json({ error: 'Clinical alert not found' });
+    if (existing.status !== 'ACTED_ON') {
+      return res.status(409).json({ error: 'Record the clinical action before resolving this alert' });
+    }
+    const changed = await prisma.clinicalAlert.updateMany({
+      where: { id: existing.id, facilityId: req.ctx.facilityId, status: 'ACTED_ON' },
+      data: { status: 'RESOLVED', resolvedById: req.ctx.userId, resolvedAt: new Date(), resolution },
+    });
+    if (changed.count !== 1) return res.status(409).json({ error: 'This alert was updated by another clinician. Refresh to see its current state.' });
+    const alert = await prisma.clinicalAlert.findUnique({ where: { id: existing.id } });
+    audit(req, 'clinical_alert.resolve', alert.id, resolution);
+    res.json(alert);
   } catch (e) { next(e); }
 });
 

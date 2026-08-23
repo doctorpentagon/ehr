@@ -144,6 +144,12 @@ function RoleRoute({ module, children }) {
   return children;
 }
 
+function DashboardHome() {
+  const role = useSelector((s) => s.auth.user?.role);
+  if (role === 'SUPER_ADMIN') return <Navigate to="/dashboard/platform" replace />;
+  return <Overview />;
+}
+
 export default function App() {
   const dispatch = useDispatch();
   const setAuth = useAuthStore((s) => s.setAuth);
@@ -186,9 +192,9 @@ export default function App() {
       <Route path="/clinic/:slug" element={<ClinicLanding />} />
 
       <Route path="/dashboard" element={<PrivateRoute><AppShell /></PrivateRoute>}>
-        <Route index element={<Overview />} />
+        <Route index element={<DashboardHome />} />
         <Route path="patients" element={<RoleRoute module="patients"><Patients /></RoleRoute>} />
-        <Route path="patients/add" element={<RoleRoute module="patients"><AddPatient /></RoleRoute>} />
+        <Route path="patients/add" element={<RoleRoute module="patient_demographics_write"><AddPatient /></RoleRoute>} />
         <Route path="patients/:id" element={<RoleRoute module="patients"><PatientDetail /></RoleRoute>} />
         <Route path="patients/:id/id-card" element={<RoleRoute module="patients"><PatientIDCard /></RoleRoute>} />
         <Route path="appointments" element={<RoleRoute module="appointments"><Appointments /></RoleRoute>} />
@@ -211,8 +217,8 @@ export default function App() {
         <Route path="bookings" element={<RoleRoute module="bookings"><Bookings /></RoleRoute>} />
         {/* Open to every signed-in member of staff: published reference material,
             not patient data. Gating it would only send people to their phones. */}
-        <Route path="scout" element={<Scout />} />
-        <Route path="messages" element={<Messages />} />
+        <Route path="scout" element={<RoleRoute module={null}><Scout /></RoleRoute>} />
+        <Route path="messages" element={<RoleRoute module={null}><Messages /></RoleRoute>} />
         <Route path="inquiries" element={<RoleRoute module="patients"><Inquiries /></RoleRoute>} />
         <Route path="households" element={<RoleRoute module="households"><Households /></RoleRoute>} />
         <Route path="insurance" element={<RoleRoute module="billing"><InsurancePage /></RoleRoute>} />

@@ -1,5 +1,6 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import api from '@/lib/api';
+import { normalizeAuthError } from '@/lib/authErrors';
 
 export const login = createAsyncThunk('auth/login', async ({ email, password }, { rejectWithValue }) => {
   try {
@@ -8,7 +9,7 @@ export const login = createAsyncThunk('auth/login', async ({ email, password }, 
     if (accessToken) localStorage.setItem('accessToken', accessToken);
     return { user, facility };
   } catch (err) {
-    return rejectWithValue(err.response?.data || { error: err.message });
+    return rejectWithValue(normalizeAuthError(err, 'Invalid credentials'));
   }
 });
 
@@ -20,7 +21,7 @@ export const demoLogin = createAsyncThunk('auth/demoLogin', async ({ userId, acc
     if (accessToken) localStorage.setItem('accessToken', accessToken);
     return { user, facility };
   } catch (err) {
-    return rejectWithValue(err.response?.data || { error: err.message });
+    return rejectWithValue(normalizeAuthError(err, 'Could not enter the demo'));
   }
 });
 

@@ -32,6 +32,7 @@ router.use('/analytics', require('./overview')); // alias — frontend calls /an
 router.use('/affiliates', require('./affiliates'));
 router.use('/uploads',    require('./uploads'));
 router.use('/ocr',        require('./ocr'));
+router.use('/ai',         require('./clinicalAi'));
 router.use('/paystack',   require('./paystack'));
 router.use('/consent',    require('./consent'));
 

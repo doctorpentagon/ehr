@@ -53,6 +53,11 @@ if (process.env.NODE_ENV === 'production') {
     process.exit(1);
   }
   if (DEMO_MODE) {
+    if (!process.env.DEMO_ACCESS_CODE || process.env.DEMO_ACCESS_CODE.length < 16) {
+      console.error('FATAL: Hosted DEMO_MODE requires DEMO_ACCESS_CODE with at least 16 characters.');
+      console.error('       This code is the gate in front of passwordless role selection.');
+      process.exit(1);
+    }
     // Printed on every boot, so nobody inherits this instance without knowing.
     console.warn('');
     console.warn('  ┌────────────────────────────────────────────────────────────┐');

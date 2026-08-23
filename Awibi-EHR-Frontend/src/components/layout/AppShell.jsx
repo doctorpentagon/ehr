@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import Sidebar from './Sidebar';
 import AlertBanner from '@/components/clinical/AlertBanner';
 import TopBar from './TopBar';
@@ -11,7 +11,10 @@ const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes — shared device safety
 
 export default function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('awibi:sidebar-collapsed') === 'true');
   const dispatch = useDispatch();
+  const { user } = useSelector((s) => s.auth);
+  const isPlatformOperator = user?.role === 'SUPER_ADMIN';
   const navigate = useNavigate();
   const idleTimer = useRef(null);
 
@@ -33,12 +36,20 @@ export default function AppShell() {
     };
   }, [resetTimer]);
 
+  const toggleDesktopSidebar = () => {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      localStorage.setItem('awibi:sidebar-collapsed', String(next));
+      return next;
+    });
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <OfflineBanner />
       {/* Desktop sidebar */}
-      <aside className="hidden md:flex md:flex-col md:w-72 border-r border-sidebar-border bg-sidebar flex-shrink-0">
-        <Sidebar />
+      <aside className={`hidden md:flex md:flex-col border-r border-sidebar-border bg-sidebar flex-shrink-0 transition-[width] duration-200 ${sidebarCollapsed ? 'md:w-20' : 'md:w-72'}`}>
+        <Sidebar collapsed={sidebarCollapsed} />
       </aside>
 
       {/* Mobile sidebar overlay */}
@@ -46,14 +57,18 @@ export default function AppShell() {
         <div className="fixed inset-0 z-40 md:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setSidebarOpen(false)} />
           <aside className="absolute left-0 top-0 bottom-0 w-72 bg-sidebar flex flex-col z-50 shadow-xl">
-            <Sidebar onClose={() => setSidebarOpen(false)} />
+            <Sidebar onClose={() => setSidebarOpen(false)} collapsed={false} />
           </aside>
         </div>
       )}
 
       {/* Main content */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        <TopBar onMenuClick={() => setSidebarOpen(true)} />
+        <TopBar
+          onMenuClick={() => setSidebarOpen(true)}
+          onSidebarToggle={toggleDesktopSidebar}
+          sidebarCollapsed={sidebarCollapsed}
+        />
         {/*
           One container for every authenticated page.
           Most pages previously set no padding at all, so their content ran to
@@ -72,7 +87,7 @@ export default function AppShell() {
           <div className="mx-auto w-full max-w-350 overflow-x-hidden px-4 py-4 md:px-6 md:py-6 lg:px-8">
             {/* Facility-wide clinical alerts, collapsed to one line unless
                 opened — a banner that fills the screen daily stops being read. */}
-            <AlertBanner />
+            {!isPlatformOperator && <AlertBanner />}
             <Outlet />
           </div>
         </main>

@@ -12,6 +12,7 @@ const INITIAL = {
   phone: '', email: '', nin: '', address: '', state: '', lga: '',
   bloodType: '', height: '', weight: '', hmo: '', allergies: '', notes: '',
   emergencyContactName: '', emergencyContactPhone: '', emergencyContactRelationship: '',
+  identityIdentifier: '', identityConsentGranted: false, identityConsentScope: 'LAB_ONLY',
 };
 
 export default function AddPatient() {
@@ -23,10 +24,14 @@ export default function AddPatient() {
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
 
   const { mutate, isPending } = useMutation({
-    mutationFn: () => api.post('/patients', form),
+    mutationFn: () => api.post('/patients', {
+      ...form,
+      emergencyContactRelation: form.emergencyContactRelationship || undefined,
+    }),
     onSuccess: ({ data }) => {
       qc.invalidateQueries({ queryKey: ['patients'] });
       toast.success(`Patient registered · Hosp No ${data.mrn} · Patient ID ${data.universalPatientId}`);
+      (data.warnings || []).forEach((warning) => toast.warning(warning.message, { duration: 9000 }));
       navigate(`/dashboard/patients/${data.id}`);
     },
     onError: err => toast.error(err.response?.data?.error || 'Registration failed'),
@@ -144,6 +149,41 @@ export default function AddPatient() {
 
               <div className="bg-[#2D5BFF]/5 rounded-xl p-4 text-sm text-[#2D5BFF]">
                 <strong>Review:</strong> {form.firstName} {form.lastName}, {form.gender}, DOB {form.dateOfBirth}, Phone: {form.phone}
+              </div>
+
+              <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900">Awibi Identity link (optional)</h3>
+                  <p className="text-xs text-gray-500 mt-1">
+                    The hospital record and Hosp No work without Identity. Link only when the patient presents their Identity code or verified account identifier and explicitly agrees.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Identity code or verified identifier</label>
+                  <input value={form.identityIdentifier} onChange={set('identityIdentifier')}
+                    placeholder="e.g. AWB-XXXXXXXX or verified phone"
+                    className="w-full min-h-11 px-3 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#2D5BFF]/30" />
+                </div>
+                {form.identityIdentifier && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Consent scope</label>
+                      <select value={form.identityConsentScope} onChange={set('identityConsentScope')}
+                        className="w-full min-h-11 px-3 border border-gray-300 rounded-lg text-sm bg-white">
+                        <option value="LAB_ONLY">Diagnostic results only</option>
+                        <option value="FULL">All approved health-information deliveries</option>
+                      </select>
+                    </div>
+                    <label className="flex items-start gap-3 min-h-11 cursor-pointer">
+                      <input type="checkbox" checked={form.identityConsentGranted}
+                        onChange={(event) => setForm((current) => ({ ...current, identityConsentGranted: event.target.checked }))}
+                        className="mt-0.5 size-5 rounded border-gray-300" />
+                      <span className="text-sm text-gray-700">
+                        I confirm the patient (or authorized guardian) explicitly consented to this facility link and the selected delivery scope.
+                      </span>
+                    </label>
+                  </>
+                )}
               </div>
             </div>
           )}

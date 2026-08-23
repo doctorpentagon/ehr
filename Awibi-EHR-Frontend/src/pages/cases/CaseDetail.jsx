@@ -9,14 +9,18 @@ import { can } from '@/lib/permissions';
 import StatusBadge from '@/components/ui/StatusBadge';
 import Spinner from '@/components/ui/Spinner';
 import Avatar from '@/components/ui/Avatar';
+import ClinicalText from '@/components/clinical/ClinicalText';
+import ClinicalAttribution, { professionalName } from '@/components/clinical/ClinicalAttribution';
 import { toast } from 'sonner';
 
 const METHOD_ICONS = { NOTE_TAKER: FileText, VOICE: Mic, OCR: Camera, QUESTIONNAIRE: ClipboardList };
+const METHOD_LABELS = { NOTE_TAKER: 'SOAP note', VOICE: 'Voice-assisted note', OCR: 'Scan / OCR-assisted note', QUESTIONNAIRE: 'Questionnaire-assisted note' };
 
 export default function CaseDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const [diagnosisCodes, setDiagnosisCodes] = React.useState('');
 
   const { data: encounter, isLoading } = useQuery({
     queryKey: ['case', id],
@@ -39,6 +43,18 @@ export default function CaseDetail() {
     onError: (e) => toast.error(e?.response?.data?.error || 'Failed to sign note'),
   });
 
+  const { mutate: saveDiagnosisCodes, isPending: savingDiagnosisCodes } = useMutation({
+    mutationFn: () => api.put(`/cases/${id}`, {
+      icdCodes: diagnosisCodes.split(',').map(code => code.trim().toUpperCase()).filter(Boolean),
+      version: encounter.version,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['case', id] });
+      toast.success('Diagnosis codes saved. The note is ready for signing.');
+    },
+    onError: (e) => toast.error(e?.response?.data?.error || 'Failed to save diagnosis codes'),
+  });
+
   const user = useSelector(s => s.auth?.user);
   const maySign = can(user?.role, user?.subRole, 'clinical_write');
 
@@ -46,6 +62,11 @@ export default function CaseDetail() {
   if (!encounter) return <div className="text-center py-16 text-gray-500">Encounter not found</div>;
 
   const Icon = METHOD_ICONS[encounter.captureMethod] || FileText;
+  const signerName = professionalName(encounter.signedBy || encounter.author);
+  const standingOrders = encounter.structuredOrders?.orders || [];
+  const medications = encounter.structuredOrders?.medications || [];
+  const investigations = encounter.structuredOrders?.investigations || [];
+  const hasStructuredOrders = standingOrders.length + medications.length + investigations.length > 0;
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
@@ -63,9 +84,9 @@ export default function CaseDetail() {
             <div>
               <h1 className="text-lg font-bold text-gray-900">{encounter.title}</h1>
               <div className="flex flex-wrap items-center gap-2 mt-1">
-                <span className="text-xs text-gray-500">{encounter.captureMethod?.replace(/_/g,' ')}</span>
+                <span className="text-xs text-gray-500">{METHOD_LABELS[encounter.captureMethod] || encounter.captureMethod?.replace(/_/g,' ')}</span>
                 <span className="text-xs text-gray-400">·</span>
-                <span className="text-xs text-gray-500">{encounter.createdAt ? format(new Date(encounter.createdAt), 'dd MMM yyyy, hh:mm a') : ''}</span>
+                <span className="text-xs text-gray-500">Care occurred {format(new Date(encounter.occurredAt || encounter.createdAt), 'dd MMM yyyy, hh:mm a')}</span>
               </div>
             </div>
           </div>
@@ -76,7 +97,7 @@ export default function CaseDetail() {
                 {encounter.encounterType.replace(/_/g, ' ').toLowerCase()}
               </span>
             )}
-            {!encounter.signedAt && !encounter.reviewedByClinicianAt && (
+            {!encounter.signedAt && !encounter.reviewedByClinicianAt && maySign && (
               <button onClick={() => review()} disabled={reviewing} className="flex items-center gap-1.5 px-3 min-h-11 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 disabled:opacity-50">
                 <CheckCircle size={14} /> {reviewing ? 'Marking…' : 'Mark Reviewed'}
               </button>
@@ -101,13 +122,42 @@ export default function CaseDetail() {
           </Link>
         )}
 
+        <div className="mt-3">
+          <ClinicalAttribution
+            professional={encounter.author}
+            timestamp={encounter.createdAt}
+            label="Consultation recorded in EHR by"
+            compact
+          />
+          {encounter.lateEntryReason && (
+            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+              <strong>Retrospective entry:</strong> care occurred {format(new Date(encounter.occurredAt), 'dd MMM yyyy, hh:mm a')}. Reason: {encounter.lateEntryReason}
+            </div>
+          )}
+        </div>
+
+        {!encounter.signedAt && maySign && !encounter.icdCodes?.length && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
+            <label htmlFor="case-diagnosis-codes" className="text-xs font-semibold text-amber-950">Diagnosis codes required before signing</label>
+            <p className="text-xs text-amber-900 mt-1">The assessment is the clinical narrative. Add its ICD-10 code here so the encounter is coded and reportable.</p>
+            <div className="flex flex-col sm:flex-row gap-2 mt-2">
+              <input id="case-diagnosis-codes" value={diagnosisCodes} onChange={event => setDiagnosisCodes(event.target.value)}
+                placeholder="e.g. G44.2, I10" className="min-h-10 flex-1 rounded-lg border border-amber-300 bg-white px-3 text-sm" />
+              <button type="button" onClick={() => saveDiagnosisCodes()} disabled={savingDiagnosisCodes || !diagnosisCodes.trim()}
+                className="min-h-10 rounded-lg bg-amber-900 px-3 text-xs font-semibold text-white hover:bg-amber-950 disabled:opacity-50">
+                {savingDiagnosisCodes ? 'Saving…' : 'Save diagnosis codes'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {encounter.signedAt ? (
           <div className="mt-3 flex items-start gap-2 text-xs text-[#0B1F66] bg-[#2D5BFF]/5 border border-[#2D5BFF]/20 rounded-lg px-3 py-2.5">
             <Lock size={14} className="shrink-0 mt-0.5" />
             <div>
               <div className="font-semibold">
                 Signed on {format(new Date(encounter.signedAt), 'dd MMM yyyy, hh:mm a')}
-                {encounter.author && ` by Dr. ${encounter.author.firstName} ${encounter.author.lastName}`}
+                {` by ${signerName}`}
               </div>
               <div className="text-gray-600 mt-0.5">
                 This note is part of the permanent clinical record. It cannot be edited or deleted —
@@ -116,15 +166,43 @@ export default function CaseDetail() {
             </div>
           </div>
         ) : encounter.reviewedByClinicianAt && (
-          <div className="mt-3 flex items-center gap-2 text-xs text-green-600 bg-green-50 rounded-lg px-3 py-2">
-            <CheckCircle size={13} /> Reviewed by clinician on {format(new Date(encounter.reviewedByClinicianAt), 'dd MMM yyyy')}
+          <div className="mt-3 flex items-center gap-2 text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2">
+            <CheckCircle size={13} /> Reviewed by {professionalName(encounter.reviewedBy || encounter.author)} on {format(new Date(encounter.reviewedByClinicianAt), 'dd MMM yyyy, hh:mm a')}
           </div>
         )}
 
-        {encounter.doctorsOrders && (
+        {hasStructuredOrders && (
+          <section className="mt-3 rounded-xl border border-blue-200 bg-blue-50/40 p-3" aria-labelledby="routed-orders-title">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 id="routed-orders-title" className="text-sm font-semibold text-gray-900">Clinical orders</h2>
+                <p className="text-xs text-gray-600">Live records routed to the responsible teams</p>
+              </div>
+              <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-800">
+                {standingOrders.length + medications.length + investigations.length} total
+              </span>
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <OrderGroup title="Nursing & care" items={standingOrders} empty="No care orders"
+                renderDetail={item => `${item.priority?.toLowerCase() || 'routine'}${item.frequencyHours ? ` · every ${item.frequencyHours}h` : ''} · ${item.status?.toLowerCase()}`} />
+              <OrderGroup title="Medicines" items={medications} empty="No medicines"
+                renderDetail={item => `${item.dosage}${item.frequency ? ` · ${item.frequency}` : ''}${item.route ? ` · ${item.route}` : ''} · ${item.status?.toLowerCase()}`} />
+              <OrderGroup title="Investigations" items={investigations} empty="No investigations"
+                renderDetail={item => `${item.testType?.toLowerCase() || 'test'} · ${item.priority?.toLowerCase()} · ${item.status?.toLowerCase()}`} />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              {standingOrders.length > 0 && <Link to="/dashboard/nursing/orders" className="font-medium text-[#2D5BFF] hover:underline">Open nursing orders</Link>}
+              {medications.length > 0 && <Link to={`/dashboard/patients/${encounter.patientId}?tab=Prescriptions`} className="font-medium text-[#2D5BFF] hover:underline">Open medicines</Link>}
+              {investigations.length > 0 && <Link to={`/dashboard/patients/${encounter.patientId}?tab=Lab`} className="font-medium text-[#2D5BFF] hover:underline">Open diagnostics</Link>}
+            </div>
+          </section>
+        )}
+
+        {!hasStructuredOrders && encounter.doctorsOrders && (
           <div className="mt-3 border border-amber-200 bg-amber-50 rounded-lg px-3 py-2.5">
-            <div className="text-xs font-semibold text-amber-900 mb-1">To do / Doctor&rsquo;s orders</div>
+            <div className="text-xs font-semibold text-amber-900 mb-1">Legacy order note</div>
             <p className="text-sm text-amber-900 whitespace-pre-wrap">{encounter.doctorsOrders}</p>
+            <p className="mt-1 text-xs text-amber-800">This older free-text note is not a live worklist item. Confirm execution with the responsible team.</p>
           </div>
         )}
       </div>
@@ -134,6 +212,7 @@ export default function CaseDetail() {
         {[
           ['Chief Complaint', encounter.chiefComplaint],
           ['History of Presenting Illness', encounter.history],
+          ['Review of Systems', encounter.reviewOfSystems],
           ['Examination Findings', encounter.examination],
           ['Assessment / Diagnosis', encounter.assessment],
           ['Plan', encounter.plan],
@@ -141,7 +220,7 @@ export default function CaseDetail() {
         ].map(([label, value]) => value ? (
           <div key={label}>
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">{label}</h3>
-            <div className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{value}</div>
+            <ClinicalText value={value} className="text-sm text-gray-800 leading-relaxed" />
           </div>
         ) : null)}
 
@@ -191,6 +270,24 @@ export default function CaseDetail() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function OrderGroup({ title, items, empty, renderDetail }) {
+  return (
+    <div className="rounded-lg border border-blue-100 bg-white p-3">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">{title}</h3>
+      {items.length === 0 ? <p className="mt-2 text-xs text-gray-400">{empty}</p> : (
+        <ul className="mt-2 space-y-2">
+          {items.map(item => (
+            <li key={item.id}>
+              <div className="text-xs font-medium text-gray-900">{item.name || item.drugName || item.testName}</div>
+              <div className="text-[11px] text-gray-500">{renderDetail(item)}</div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

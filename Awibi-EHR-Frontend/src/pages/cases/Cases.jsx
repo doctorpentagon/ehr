@@ -8,6 +8,7 @@ import StatusBadge from '../../components/ui/StatusBadge';
 import Avatar from '../../components/ui/Avatar';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
+import { professionalName } from '../../components/clinical/ClinicalAttribution';
 
 const METHOD_ICONS = { NOTE_TAKER: FileText, VOICE: Mic, OCR: Camera, QUESTIONNAIRE: ClipboardList };
 
@@ -79,8 +80,9 @@ export default function Cases() {
                       <div className="flex items-center gap-3 mt-1.5 text-xs text-gray-400">
                         <span>{c.captureMethod?.replace(/_/g,' ')}</span>
                         <span>·</span>
-                        <span>{c.createdAt ? format(new Date(c.createdAt), 'dd MMM yyyy') : ''}</span>
-                        {c.author && <><span>·</span><span>by {c.author.firstName} {c.author.lastName}</span></>}
+                        <span>{format(new Date(c.occurredAt || c.createdAt), 'dd MMM yyyy · hh:mm a')}</span>
+                        {c.lateEntryReason && <span className="rounded bg-amber-50 px-1.5 py-0.5 font-medium text-amber-700">Late entry</span>}
+                        {c.author && <><span>·</span><span>by {professionalName(c.author)}</span></>}
                       </div>
                     </div>
                   </div>

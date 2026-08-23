@@ -49,7 +49,10 @@ function rows(b) {
   const { body: cat } = await req('/auth/local-demo-accounts');
   const accounts = cat?.accounts || [];
 
-  const admins = accounts.filter((a) => a.role === 'ADMIN' || a.role === 'SUPER_ADMIN');
+  // A SUPER_ADMIN is an Awibi platform operator and is now deliberately barred
+  // from tenant clinical routes. Using it as a facility probe makes populated
+  // UCH resources look empty and turns this into a nearly toothless test.
+  const admins = accounts.filter((a) => a.role === 'ADMIN');
   const byFacility = new Map();
   for (const a of admins) if (!byFacility.has(a.facility.id)) byFacility.set(a.facility.id, a);
   if (byFacility.size < 2) { console.log('  need two facilities'); process.exit(1); }

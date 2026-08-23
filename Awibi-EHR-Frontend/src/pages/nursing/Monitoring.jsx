@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Activity, Search, X } from 'lucide-react';
+import { Plus, Activity, Search, X, ClipboardPlus, ArrowRight, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import api from '../../lib/api';
@@ -10,6 +10,8 @@ import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 import { can } from '../../lib/permissions';
 import PatientPicker from '../../components/clinical/PatientPicker';
+import ClinicalAttribution, { professionalName } from '../../components/clinical/ClinicalAttribution';
+import ClinicalEventTime from '../../components/clinical/ClinicalEventTime';
 import { useSelector } from 'react-redux';
 
 const STATUS_STYLES = {
@@ -21,6 +23,7 @@ const STATUS_STYLES = {
 
 function NewSheetModal({ open, onClose }) {
   const qc = useQueryClient();
+  const user = useSelector(s => s.auth?.user);
   const [patientId, setPatientId] = useState('');
   const [type, setType] = useState('');
   const [customType, setCustomType] = useState('');
@@ -28,6 +31,9 @@ function NewSheetModal({ open, onClose }) {
   const [targetValue, setTargetValue] = useState('');
   const [frequencyMins, setFrequencyMins] = useState('');
   const [instructions, setInstructions] = useState('');
+  const [retrospective, setRetrospective] = useState(false);
+  const [startedAt, setStartedAt] = useState('');
+  const [lateEntryReason, setLateEntryReason] = useState('');
 
   const { data: templatesData } = useQuery({
     queryKey: ['monitoring-templates'],
@@ -53,12 +59,18 @@ function NewSheetModal({ open, onClose }) {
     setPatientId(''); setType(''); setCustomType('');
     setCustomFields([{ key: '', label: '', unit: '', kind: 'number' }]);
     setTargetValue(''); setFrequencyMins(''); setInstructions('');
+    setRetrospective(false); setStartedAt(''); setLateEntryReason('');
   }
 
   function submit() {
     if (!patientId) return toast.error('Choose a patient');
     if (!type) return toast.error('Choose what you are monitoring');
+    if (retrospective && (!startedAt || !lateEntryReason.trim())) return toast.error('Choose the monitoring start time and give a reason for the late entry');
     const body = { patientId, type, instructions: instructions || undefined };
+    if (retrospective) {
+      body.startedAt = new Date(startedAt).toISOString();
+      body.lateEntryReason = lateEntryReason.trim();
+    }
     if (targetValue) body.targetValue = Number(targetValue);
     if (frequencyMins) body.frequencyMins = Number(frequencyMins);
     if (isCustom) {
@@ -92,7 +104,17 @@ function NewSheetModal({ open, onClose }) {
         </div>
 
         <div className="p-5 space-y-4">
+          <ClinicalAttribution professional={user} label="Monitoring will be started by" pending compact />
           <PatientPicker id="ms-patient" value={patientId} onChange={setPatientId} required autoFocus />
+          <ClinicalEventTime
+            custom={retrospective}
+            onCustomChange={setRetrospective}
+            value={startedAt}
+            onValueChange={setStartedAt}
+            reason={lateEntryReason}
+            onReasonChange={setLateEntryReason}
+            label="When did this monitoring clinically start?"
+          />
 
           <div>
             <span className="block text-sm font-medium text-gray-700 mb-1.5">What are you monitoring?</span>
@@ -200,6 +222,7 @@ function NewSheetModal({ open, onClose }) {
 
 export default function Monitoring() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [status, setStatus] = useState('ACTIVE');
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
@@ -209,6 +232,32 @@ export default function Monitoring() {
   const { data, isLoading } = useQuery({
     queryKey: ['monitoring-sheets', status],
     queryFn: () => api.get('/nursing/monitoring-sheets', { params: { status: status || undefined, limit: 50 } }).then(r => r.data),
+  });
+
+  const { data: requestData } = useQuery({
+    queryKey: ['monitoring-requests'],
+    queryFn: () => api.get('/nursing/monitoring-requests').then(response => response.data),
+    enabled: mayWrite,
+    refetchInterval: 30_000,
+  });
+  const requests = requestData?.requests || [];
+
+  const openOrderedChart = useMutation({
+    mutationFn: request => api.post(`/nursing/monitoring-requests/${request.orderId}/initiate`, {
+      title: request.suggested?.title || request.orderName,
+      fields: request.suggested?.fields,
+      frequencyMins: request.suggested?.frequencyMins,
+      targetUnit: request.suggested?.targetUnit,
+      instructions: request.instructions || request.goal,
+    }).then(response => response.data),
+    onSuccess: result => {
+      qc.invalidateQueries({ queryKey: ['monitoring-requests'] });
+      qc.invalidateQueries({ queryKey: ['monitoring-sheets'] });
+      qc.invalidateQueries({ queryKey: ['standing-orders'] });
+      toast.success('Ordered monitoring chart opened');
+      navigate(`/dashboard/nursing/sheet/${result.sheet.id}`);
+    },
+    onError: error => toast.error(error.response?.data?.error || 'Could not open the ordered chart'),
   });
 
   const sheets = (data?.sheets || []).filter(s => {
@@ -232,6 +281,47 @@ export default function Monitoring() {
           </button>
         )}
       </div>
+
+      {mayWrite && requests.length > 0 && (
+        <section className="rounded-xl border border-blue-200 bg-blue-50/50 p-4" aria-labelledby="ordered-monitoring-title">
+          <div className="flex items-start gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-[#2D5BFF]">
+              <ClipboardPlus size={19} />
+            </div>
+            <div>
+              <h2 id="ordered-monitoring-title" className="text-sm font-semibold text-gray-900">Ordered monitoring awaiting a chart</h2>
+              <p className="mt-0.5 text-xs text-gray-600">Open these first so the bedside record stays linked to the doctor&rsquo;s instruction.</p>
+            </div>
+          </div>
+          <div className="mt-3 grid gap-2 lg:grid-cols-2">
+            {requests.map(request => (
+              <article key={request.orderId} className="rounded-lg border border-blue-100 bg-white p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-medium text-gray-900">{request.orderName}</h3>
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${request.priority === 'STAT' ? 'bg-red-100 text-red-800' : request.priority === 'URGENT' ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600'}`}>{request.priority}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-gray-600">{request.patient?.firstName} {request.patient?.lastName} · {request.patient?.mrn || 'No hospital number'}</p>
+                    {request.goal && <p className="mt-1 text-xs text-gray-500">Goal: {request.goal}</p>}
+                    <p className="mt-1 text-[11px] text-gray-400">
+                      {request.suggested?.fields?.length || 0} measurement{request.suggested?.fields?.length === 1 ? '' : 's'}
+                      {request.suggested?.frequencyMins ? ` · every ${request.suggested.frequencyMins} min` : ''}
+                    </p>
+                  </div>
+                  <button type="button" onClick={() => openOrderedChart.mutate(request)}
+                    disabled={openOrderedChart.isPending && openOrderedChart.variables?.orderId === request.orderId}
+                    className="min-h-11 shrink-0 rounded-lg bg-[#0B1F66] px-3 text-xs font-semibold text-white hover:bg-[#071647] disabled:opacity-50 flex items-center gap-1.5">
+                    {openOrderedChart.isPending && openOrderedChart.variables?.orderId === request.orderId
+                      ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
+                    Open chart
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col sm:flex-row gap-3">
         <div className="flex-1 relative">
@@ -280,7 +370,8 @@ export default function Monitoring() {
                       <span>{s._count?.entries ?? 0} entries</span>
                       {s.frequencyMins && <><span>·</span><span>every {s.frequencyMins} min</span></>}
                       <span>·</span>
-                      <span>started {s.startedAt ? format(new Date(s.startedAt), 'dd MMM HH:mm') : ''}</span>
+                      <span>started {s.startedAt ? format(new Date(s.startedAt), 'dd MMM yyyy · HH:mm') : ''}</span>
+                      {s.createdBy && <><span>·</span><span>by {professionalName(s.createdBy)}</span></>}
                     </div>
                   </div>
                 </div>

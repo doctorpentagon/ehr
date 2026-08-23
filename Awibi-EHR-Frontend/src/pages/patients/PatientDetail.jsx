@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronLeft, Plus, AlertTriangle, Heart, Activity, Pill,
-  FlaskConical, FileText, Upload, Printer, X, Edit2,
+  FlaskConical, FileText, Upload, Printer, X, Edit2, Link2, Unlink,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -34,18 +34,33 @@ const TABS = [
 export default function PatientDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
   const can = useAuthStore(s => s.can);
   const canWriteVitals = can('vitals_write');
   const canWriteClinical = can('clinical_write');
   const canWritePrescriptions = can('prescriptions_write');
-  const canCreateCases = can('cases');
-  const canRequestLab = can('lab');
-  const [tab, setTab] = useState('Overview');
+  const canCreateCases = can('clinical_write');
+  const canRequestLab = can('diagnostic_order');
+  const canManageIdentity = can('patient_demographics_write');
+  const requestedTab = searchParams.get('tab');
+  const [tab, setTab] = useState(TABS.some(item => item.key === requestedTab) ? requestedTab : 'Overview');
   const [vitalOpen, setVitalOpen] = useState(false);
   const [allergyOpen, setAllergyOpen] = useState(false);
   const [conditionOpen, setConditionOpen] = useState(false);
   const [rxOpen, setRxOpen] = useState(false);
+  const [clinicalActionOpen, setClinicalActionOpen] = useState(false);
+  const [identityOpen, setIdentityOpen] = useState(false);
+
+  useEffect(() => {
+    if (requestedTab && TABS.some(item => item.key === requestedTab)) setTab(requestedTab);
+    if (requestedTab === 'Conditions' && searchParams.get('addCondition') === '1' && canWriteClinical) {
+      setConditionOpen(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete('addCondition');
+      setSearchParams(next, { replace: true });
+    }
+  }, [requestedTab, searchParams, setSearchParams, canWriteClinical]);
 
   const { data: patient, isLoading } = useQuery({
     queryKey: ['patient', id],
@@ -74,6 +89,15 @@ export default function PatientDetail() {
             <Printer size={15} /> Print ID Card
           </button>
           {canCreateCases && (
+            <button
+              type="button"
+              onClick={() => setClinicalActionOpen(true)}
+              className="flex items-center gap-2 px-3 py-2 border border-[#2D5BFF]/30 text-[#2D5BFF] rounded-lg text-sm font-medium hover:bg-blue-50"
+            >
+              <Plus size={15} /> New clinical order
+            </button>
+          )}
+          {canCreateCases && (
             <Link
               to={`/dashboard/cases/new?patientId=${patient.id}`}
               className="flex items-center gap-2 px-3 py-2 bg-[#2D5BFF] text-white rounded-lg text-sm font-medium hover:bg-[#1a45e0]"
@@ -93,11 +117,21 @@ export default function PatientDetail() {
               <div>
                 <h1 className="text-xl font-bold text-gray-900">{patient.firstName} {patient.lastName}</h1>
                 <div className="flex flex-wrap items-center gap-2 mt-1">
-                  <span className="font-mono text-sm text-[#2D5BFF] bg-blue-50 px-2.5 py-0.5 rounded-full font-semibold">
-                    {patient.universalPatientId}
+                  <span className="font-mono text-xs text-[#2D5BFF] bg-blue-50 px-2.5 py-1 rounded-full font-semibold">
+                    Patient ID {patient.universalPatientId}
                   </span>
-                  <span className="text-sm text-gray-400">{patient.mrn}</span>
+                  <span className="text-xs text-gray-500">Hosp No {patient.mrn}</span>
                   <StatusBadge status={patient.status} />
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${patient.identityLinkStatus === 'ACTIVE' ? 'bg-green-50 text-green-700' : patient.identityLinkStatus === 'REVOKED' ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-600'}`}>
+                    Identity {patient.identityLinkStatus?.toLowerCase() || 'unlinked'}
+                  </span>
+                  {patient.identityContinuityCode && <span className="font-mono text-xs text-gray-500">Identity code {patient.identityContinuityCode}</span>}
+                  {canManageIdentity && (
+                    <button onClick={() => setIdentityOpen(true)} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-gray-300 px-2.5 text-xs text-gray-700 hover:bg-gray-50">
+                      {patient.identityLinkStatus === 'ACTIVE' ? <Unlink size={13} /> : <Link2 size={13} />}
+                      Manage Identity link
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -149,7 +183,7 @@ export default function PatientDetail() {
 
         <div className="p-5">
           {tab === 'Overview'      && <OverviewTab patient={patient} onAddVital={() => setVitalOpen(true)} canWrite={canWriteVitals} />}
-          {tab === 'Cases'         && <CasesTab cases={patient.cases || []} patientId={patient.id} />}
+          {tab === 'Cases'         && <CasesTab cases={patient.cases || []} patientId={patient.id} canCreate={canCreateCases} />}
           {tab === 'Vitals'        && <VitalsTab vitals={patient.vitals || []} onAdd={() => setVitalOpen(true)} canWrite={canWriteVitals} patientId={id} />}
           {tab === 'Monitoring'    && <MonitoringTab patientId={id} />}
           {tab === 'Allergies'     && <AllergiesTab patientId={id} allergies={patient.allergies || []} onAdd={() => setAllergyOpen(true)} canWrite={canWriteClinical} />}
@@ -166,6 +200,17 @@ export default function PatientDetail() {
       {canWriteClinical && <AddAllergyModal open={allergyOpen} onClose={() => setAllergyOpen(false)} patientId={id} />}
       {canWriteClinical && <AddConditionModal open={conditionOpen} onClose={() => setConditionOpen(false)} patientId={id} />}
       {canWritePrescriptions && <AddPrescriptionModal open={rxOpen} onClose={() => setRxOpen(false)} patientId={id} />}
+      {canWriteClinical && clinicalActionOpen && (
+        <ClinicalActionModal
+          patient={patient}
+          onClose={() => setClinicalActionOpen(false)}
+          onMedication={() => { setClinicalActionOpen(false); setRxOpen(true); }}
+          onNavigate={(path) => { setClinicalActionOpen(false); navigate(path); }}
+        />
+      )}
+      {canManageIdentity && identityOpen && (
+        <IdentityLinkModal patient={patient} onClose={() => setIdentityOpen(false)} />
+      )}
     </div>
   );
 }
@@ -176,6 +221,104 @@ function Info({ label, value }) {
       <div className="text-xs text-gray-400">{label}</div>
       <div className="font-medium text-gray-900 text-sm">{value}</div>
     </div>
+  );
+}
+
+function ClinicalActionModal({ patient, onClose, onMedication, onNavigate }) {
+  const actions = [
+    { label: 'Medication', detail: 'Prescribe a medicine', Icon: Pill, onClick: onMedication },
+    { label: 'Diagnostics', detail: 'Laboratory, imaging or ECG', Icon: FlaskConical, onClick: () => onNavigate(`/dashboard/lab?patientId=${patient.id}`) },
+    { label: 'Nursing / monitoring', detail: 'Bedside care or observation order', Icon: Activity, onClick: () => onNavigate(`/dashboard/nursing/orders?patientId=${patient.id}&new=1`) },
+    { label: 'Appointment', detail: 'Book a clinic review', Icon: FileText, onClick: () => onNavigate(`/dashboard/appointments?patientId=${patient.id}`) },
+    { label: 'New encounter', detail: 'Document consultation and combined orders', Icon: Plus, onClick: () => onNavigate(`/dashboard/cases/new?patientId=${patient.id}`) },
+  ];
+
+  return (
+    <Modal open onClose={onClose} title={`New clinical action · ${patient.firstName} ${patient.lastName}`} size="md">
+      <div className="p-5">
+        <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50/60 p-3 text-xs text-blue-900">
+          Patient ID <span className="font-mono font-semibold">{patient.universalPatientId}</span> · Hosp No <span className="font-mono font-semibold">{patient.mrn || 'not assigned'}</span>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {actions.map(({ label, detail, Icon, onClick }) => (
+            <button key={label} type="button" onClick={onClick} className="group rounded-xl border border-gray-200 p-4 text-left transition hover:border-[#2D5BFF] hover:bg-blue-50/30 focus:outline-none focus:ring-2 focus:ring-[#2D5BFF]/30">
+              <span className="flex size-9 items-center justify-center rounded-lg bg-blue-50 text-[#2D5BFF]"><Icon size={18} /></span>
+              <div className="mt-3 text-sm font-semibold text-gray-900">{label}</div>
+              <div className="mt-1 text-xs text-gray-500">{detail}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function IdentityLinkModal({ patient, onClose }) {
+  const qc = useQueryClient();
+  const [identifier, setIdentifier] = useState('');
+  const [scope, setScope] = useState('LAB_ONLY');
+  const [consentConfirmed, setConsentConfirmed] = useState(false);
+  const [revokeConfirmed, setRevokeConfirmed] = useState(false);
+  const isActive = patient.identityLinkStatus === 'ACTIVE' && patient.identityPairwiseId;
+
+  const { mutate, isPending } = useMutation({
+    mutationFn: () => isActive
+      ? api.post(`/patients/${patient.id}/identity/revoke`, { reason: 'Patient-requested revocation recorded by facility staff' })
+      : api.post(`/patients/${patient.id}/identity/link`, { identifier: identifier.trim(), scope, consentConfirmed }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['patient', patient.id] });
+      toast.success(isActive ? 'Identity link revoked' : 'Identity link active');
+      onClose();
+    },
+    onError: (error) => toast.error(error.response?.data?.error || 'Identity link could not be updated'),
+  });
+
+  return (
+    <Modal open onClose={onClose} title={isActive ? 'Manage Awibi Identity link' : 'Link Awibi Identity'} size="sm">
+      <div className="p-5 space-y-4">
+        {isActive ? (
+          <>
+            <div className="rounded-xl bg-green-50 border border-green-200 p-4 text-sm text-green-900">
+              <div className="font-semibold">Active, consented facility link</div>
+              <div className="font-mono text-xs mt-1">Identity code {patient.identityContinuityCode || 'not displayed'}</div>
+              <div className="text-xs mt-1">Assurance {patient.identityAssurance || 'not recorded'} · linked {patient.identityLinkedAt ? format(new Date(patient.identityLinkedAt), 'dd MMM yyyy') : 'date unavailable'}</div>
+            </div>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" checked={revokeConfirmed} onChange={(event) => setRevokeConfirmed(event.target.checked)} className="mt-0.5 size-5" />
+              <span className="text-sm text-gray-700">I confirm the patient requested revocation. Future deliveries will stop; existing clinical records are not deleted.</span>
+            </label>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-gray-600">Enter the code or verified identifier presented by the patient. The API creates a facility-scoped pairwise link; it does not use the public code as the clinical record key.</p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Identity code or verified identifier</label>
+              <input value={identifier} onChange={(event) => setIdentifier(event.target.value)} autoFocus
+                className="w-full min-h-11 px-3 border border-gray-300 rounded-lg text-sm font-mono" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Consent scope</label>
+              <select value={scope} onChange={(event) => setScope(event.target.value)} className="w-full min-h-11 px-3 border border-gray-300 rounded-lg text-sm bg-white">
+                <option value="LAB_ONLY">Diagnostic results only</option>
+                <option value="FULL">All approved health-information deliveries</option>
+              </select>
+            </div>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" checked={consentConfirmed} onChange={(event) => setConsentConfirmed(event.target.checked)} className="mt-0.5 size-5" />
+              <span className="text-sm text-gray-700">I confirm explicit consent was obtained from the patient or authorized guardian for this link and scope.</span>
+            </label>
+          </>
+        )}
+        <div className="flex gap-2">
+          <button onClick={onClose} className="flex-1 min-h-11 border border-gray-300 rounded-lg text-sm">Cancel</button>
+          <button onClick={() => mutate()}
+            disabled={isPending || (isActive ? !revokeConfirmed : (!identifier.trim() || !consentConfirmed))}
+            className={`flex-1 min-h-11 rounded-lg text-sm font-medium text-white disabled:opacity-50 ${isActive ? 'bg-red-600' : 'bg-[#2D5BFF]'}`}>
+            {isPending ? 'Saving…' : isActive ? 'Revoke link' : 'Link Identity'}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -272,14 +415,16 @@ function VitalChip({ label, value, unit }) {
 }
 
 // ── Cases Tab ─────────────────────────────────────────────────────────────────
-function CasesTab({ cases, patientId }) {
+function CasesTab({ cases, patientId, canCreate }) {
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">
-        <Link to={`/dashboard/cases/new?patientId=${patientId}`} className="flex items-center gap-2 px-3 py-2 bg-[#2D5BFF] text-white rounded-lg text-sm font-medium hover:bg-[#1a45e0]">
-          <Plus size={15} /> New Encounter
-        </Link>
-      </div>
+      {canCreate && (
+        <div className="flex justify-end">
+          <Link to={`/dashboard/cases/new?patientId=${patientId}`} className="flex items-center gap-2 px-3 py-2 bg-[#2D5BFF] text-white rounded-lg text-sm font-medium hover:bg-[#1a45e0]">
+            <Plus size={15} /> New Encounter
+          </Link>
+        </div>
+      )}
       {cases.length === 0 ? (
         <p className="text-sm text-gray-400 py-8 text-center">No encounters recorded yet</p>
       ) : cases.map(c => (

@@ -35,6 +35,12 @@ enum UserSubRole {
   DOCTOR
   NURSE
   LAB
+  RADIOLOGIST
+  RADIOGRAPHER
+  HAEMATOLOGIST
+  CHEMICAL_PATHOLOGIST
+  HISTOPATHOLOGIST
+  MICROBIOLOGIST
   PHARMACIST
 }
 
@@ -197,38 +203,38 @@ enum ConsentScope {
 // ── Models ────────────────────────────────────────────────────────────────────
 
 model Facility {
-  id              String       @id @default(uuid()) @db.Uuid
-  name            String
-  type            FacilityType @default(CLINIC)
-  email           String?
-  phone           String?
-  address         String?
-  state           String?      @default("Kwara")
-  lga             String?
-  logo            String?
+  id      String       @id @default(uuid()) @db.Uuid
+  name    String
+  type    FacilityType @default(CLINIC)
+  email   String?
+  phone   String?
+  address String?
+  state   String?      @default("Kwara")
+  lga     String?
+  logo    String?
 
   // ── Public profile ─────────────────────────────────────────────────────────
   // The slug was previously derived from the facility name on every request.
   // That breaks in two ordinary ways: two facilities with the same name resolve
   // to the same URL, and renaming a facility silently invalidates every link it
   // has already printed on a card or posted on social media. Stored instead.
-  slug            String?      @unique
-  tagline         String?
-  primaryColor    String?
-  receptionPhone  String?
-  whatsappNumber  String?
-  workingHours    Json?
-  enableTriageWidget Boolean   @default(true)
+  slug               String? @unique
+  tagline            String?
+  primaryColor       String?
+  receptionPhone     String?
+  whatsappNumber     String?
+  workingHours       Json?
+  enableTriageWidget Boolean @default(true)
 
   // ── Hospital number format ─────────────────────────────────────────────────
   // The number staff quote to pull a chart. Every hospital has its own house
   // style — LUTH-26-001234, UCH/001234, GHO-1000 — and a number that does not
   // look like the one on the paper folder will not be trusted or used.
-  hospNoPrefix    String?      // e.g. "LUTH". Falls back to "PAT".
-  hospNoIncludeYear Boolean    @default(false)
-  hospNoPadding   Int          @default(3)
-  hospNoStart     Int          @default(1)
-  hospNoSeparator String       @default("-")
+  hospNoPrefix      String? // e.g. "LUTH". Falls back to "PAT".
+  hospNoIncludeYear Boolean @default(false)
+  hospNoPadding     Int     @default(3)
+  hospNoStart       Int     @default(1)
+  hospNoSeparator   String  @default("-")
 
   plan            FacilityPlan @default(FREE)
   planExpiresAt   DateTime?
@@ -240,23 +246,23 @@ model Facility {
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
-  users         User[]
-  patients      Patient[]
-  cases         Case[]
-  appointments  Appointment[]
-  departments   Department[]
-  beds          Bed[]
-  admissions    Admission[]
-  labRequests   LabRequest[]
-  invoices      Invoice[]
-  subscription  Subscription?
-  affiliates    Affiliate[]
-  consentGrants ConsentGrant[]
-  documents     PatientDocument[]
-  auditLogs     AuditLog[]
-  payments      Payment[]
-  inquiries     PatientInquiry[]
-  encounterTypes EncounterTypeConfig[]
+  users           User[]
+  patients        Patient[]
+  cases           Case[]
+  appointments    Appointment[]
+  departments     Department[]
+  beds            Bed[]
+  admissions      Admission[]
+  labRequests     LabRequest[]
+  invoices        Invoice[]
+  subscription    Subscription?
+  affiliates      Affiliate[]
+  consentGrants   ConsentGrant[]
+  documents       PatientDocument[]
+  auditLogs       AuditLog[]
+  payments        Payment[]
+  inquiries       PatientInquiry[]
+  encounterTypes  EncounterTypeConfig[]
   clinicSchedules ClinicSchedule[]
 }
 
@@ -286,15 +292,19 @@ model User {
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
 
-  facility           Facility?         @relation(fields: [facilityId], references: [id])
-  authoredCases      Case[]            @relation("CaseAuthor")
-  doctorAppointments Appointment[]     @relation("AppointmentDoctor")
-  uploadedDocs       PatientDocument[]
-  labRequests        LabRequest[]      @relation("LabRequestedBy")
-  paymentsReceived   Payment[]         @relation("PaymentReceivedBy")
-  messagesSent       Message[]         @relation("MessageSender")
-  messagesReceived   Message[]         @relation("MessageRecipient")
-  clinicSessions     ClinicScheduleDoctor[] @relation("ClinicDoctor")
+  facility                Facility?              @relation(fields: [facilityId], references: [id])
+  authoredCases           Case[]                 @relation("CaseAuthor")
+  signedCases             Case[]                 @relation("CaseSigner")
+  reviewedCases           Case[]                 @relation("CaseReviewer")
+  doctorAppointments      Appointment[]          @relation("AppointmentDoctor")
+  uploadedDocs            PatientDocument[]
+  labRequests             LabRequest[]           @relation("LabRequestedBy")
+  paymentsReceived        Payment[]              @relation("PaymentReceivedBy")
+  messagesSent            Message[]              @relation("MessageSender")
+  messagesReceived        Message[]              @relation("MessageRecipient")
+  monitoringEntries       MonitoringEntry[]      @relation("MonitoringEntryRecorder")
+  monitoringSheetsCreated MonitoringSheet[]      @relation("MonitoringSheetCreator")
+  clinicSessions          ClinicScheduleDoctor[] @relation("ClinicDoctor")
 }
 
 model Patient {
@@ -325,9 +335,19 @@ model Patient {
   avatar                   String?
   notes                    String?
   consentLinkedToIdentity  Boolean       @default(false)
-  isArchived              Boolean       @default(false)
-  archivedAt              DateTime?
-  archivedById            String?        @db.Uuid
+  // Identity integration is explicit and reversible. `universalPatientId`
+  // above is retained as the legacy/local Patient ID; the pairwise reference
+  // below is the only identifier used for EHR-to-Identity delivery.
+  identityPairwiseId       String?
+  identityContinuityCode   String?
+  identityLinkStatus       String        @default("UNLINKED")
+  identityAssurance        String?
+  identityLinkedAt         DateTime?
+  identityLastVerifiedAt   DateTime?
+  identityConsentGrantId   String?       @db.Uuid
+  isArchived               Boolean       @default(false)
+  archivedAt               DateTime?
+  archivedById             String?       @db.Uuid
   createdAt                DateTime      @default(now())
   updatedAt                DateTime      @updatedAt
 
@@ -359,14 +379,18 @@ model Patient {
 
   // Emergency arrivals are recorded before identity is confirmed. A temporary
   // record carries this flag until it is merged into, or promoted to, a real one.
-  isEmergencyTemp Boolean @default(false)
+  isEmergencyTemp     Boolean              @default(false)
   emergencyEncounters EmergencyEncounter[] @relation("EmergencyPatient")
 
-  nursingTasks NursingTask[] @relation("NursingTaskPatient")
-  orders       Order[]       @relation("OrderPatient")
+  nursingTasks   NursingTask[]        @relation("NursingTaskPatient")
+  orders         Order[]              @relation("OrderPatient")
   resuscitations ResuscitationEvent[] @relation("ResuscitationPatient")
-  messages     Message[]     @relation("MessagePatient")
+  messages       Message[]            @relation("MessagePatient")
 
+  // An MRN is the number staff quote to pull a chart. Two patients sharing one
+  // is a safety incident, so the database refuses it rather than trusting the
+  // allocation code to be race-free.
+  @@unique([facilityId, mrn])
   // Every patient query is facility-scoped first; without this the picker does a
   // sequential scan of the whole table. The trigram indexes that make ILIKE
   // "contains" search fast are added separately in
@@ -374,10 +398,7 @@ model Patient {
   @@index([facilityId, isArchived])
   @@index([facilityId, lastName, firstName])
   @@index([facilityId, phone])
-  // An MRN is the number staff quote to pull a chart. Two patients sharing one
-  // is a safety incident, so the database refuses it rather than trusting the
-  // allocation code to be race-free.
-  @@unique([facilityId, mrn])
+  @@index([facilityId, identityPairwiseId])
 }
 
 model Case {
@@ -388,6 +409,7 @@ model Case {
   title                 String?
   chiefComplaint        String?
   history               String?
+  reviewOfSystems       String?
   examination           String?
   assessment            String?
   plan                  String?
@@ -416,14 +438,21 @@ model Case {
   icdCodes              Json          @default("[]")
   aiSuggestions         Json          @default("{}")
   reviewedByClinicianAt DateTime?
+  reviewedById          String?       @db.Uuid
+  /// When the clinical contact actually occurred. This can pre-date createdAt
+  /// for a declared late entry; createdAt remains the immutable EHR audit time.
+  occurredAt             DateTime      @default(now())
+  lateEntryReason        String?
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
 
-  facility Facility @relation(fields: [facilityId], references: [id])
-  patient  Patient  @relation(fields: [patientId], references: [id])
-  author   User     @relation("CaseAuthor", fields: [authorId], references: [id])
+  facility            Facility             @relation(fields: [facilityId], references: [id])
+  patient             Patient              @relation(fields: [patientId], references: [id])
+  author              User                 @relation("CaseAuthor", fields: [authorId], references: [id])
+  signedBy            User?                @relation("CaseSigner", fields: [signedById], references: [id])
+  reviewedBy          User?                @relation("CaseReviewer", fields: [reviewedById], references: [id])
   encounterTypeConfig EncounterTypeConfig? @relation("CaseEncounterType", fields: [encounterTypeId], references: [id])
-  vitals   Vitals[]
+  vitals              Vitals[]
 }
 
 model Vitals {
@@ -543,6 +572,14 @@ model LabRequest {
   completedAt     DateTime?
   notes           String?
 
+  // Snapshot the identity context used when the investigation was ordered.
+  // A later demographic correction must not silently rewrite the context in
+  // which the laboratory or imaging report was interpreted.
+  patientDateOfBirthAtOrder DateTime?   @db.Date
+  patientGenderAtOrder      GenderType?
+  diagnosticDiscipline      String?
+  requestOrigin             String      @default("CLINICIAN_ORDER")
+
   // ── Structured result (numeric tests) ──────────────────────────────────────
   catalogueTestId String?       @db.Uuid
   resultValue     Float?
@@ -551,33 +588,43 @@ model LabRequest {
   referenceHigh   Float?
   abnormalFlag    AbnormalFlag?
   // A critical result is not "handled" until a named practitioner acknowledges it.
-  isCritical         Boolean   @default(false)
-  criticalAckById    String?   @db.Uuid
-  criticalAckAt      DateTime?
+  isCritical      Boolean       @default(false)
+  criticalAckById String?       @db.Uuid
+  criticalAckAt   DateTime?
 
   // ── Specimen tracking ──────────────────────────────────────────────────────
-  specimenId    String?
-  specimenType  String?
-  collectedAt   DateTime?
-  receivedAt    DateTime?
+  specimenId   String?
+  specimenType String?
+  collectedAt  DateTime?
+  receivedAt   DateTime?
 
   // ── Imaging / structured report ────────────────────────────────────────────
   reportFindings   String?
   reportImpression String?
   // [{ url, name, mimeType, sizeBytes }]
-  attachments      Json      @default("[]")
+  attachments      Json    @default("[]")
 
   // ── Verification and doctor review ─────────────────────────────────────────
   verifiedById       String?   @db.Uuid
   verifiedAt         DateTime?
   reviewedByDoctorAt DateTime?
 
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  // Referral to an external/affiliate diagnostic provider. This is separate
+  // from delivery of a completed report to Awibi Identity.
+  referredAffiliateId String?   @db.Uuid
+  referredAt          DateTime?
+  referralNotes       String?
+  resultVersion       Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   facility    Facility @relation(fields: [facilityId], references: [id])
   patient     Patient  @relation(fields: [patientId], references: [id])
   requestedBy User?    @relation("LabRequestedBy", fields: [requestedById], references: [id])
+
+  @@index([facilityId, status, testType, createdAt])
+  @@index([facilityId, diagnosticDiscipline, status])
 }
 
 model Department {
@@ -592,7 +639,7 @@ model Department {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  facility Facility @relation(fields: [facilityId], references: [id])
+  facility Facility         @relation(fields: [facilityId], references: [id])
   beds     Bed[]
   clinics  ClinicSchedule[]
 }
@@ -816,13 +863,15 @@ model MonitoringSheet {
   orderId       String?          @db.Uuid
   status        MonitoringStatus @default(ACTIVE)
   startedAt     DateTime         @default(now())
+  lateEntryReason String?
   endedAt       DateTime?
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
 
-  patient Patient           @relation(fields: [patientId], references: [id])
-  entries MonitoringEntry[]
-  reviews MonitoringReview[]
+  patient   Patient            @relation(fields: [patientId], references: [id])
+  createdBy User?              @relation("MonitoringSheetCreator", fields: [createdById], references: [id])
+  entries   MonitoringEntry[]
+  reviews   MonitoringReview[]
 
   @@index([facilityId, patientId, status])
 }
@@ -832,7 +881,9 @@ model MonitoringEntry {
   sheetId       String   @db.Uuid
   facilityId    String   @db.Uuid
   recordedById  String?  @db.Uuid
+  /// Clinical observation time. createdAt is the immutable time it reached EHR.
   recordedAt    DateTime @default(now())
+  lateEntryReason String?
   // Values keyed by the parent sheet's field definitions.
   values        Json     @default("{}")
   // How far outside its goal band each numeric value sits, keyed the same way:
@@ -847,8 +898,9 @@ model MonitoringEntry {
   notes         String?
   createdAt     DateTime @default(now())
 
-  sheet   MonitoringSheet    @relation(fields: [sheetId], references: [id], onDelete: Cascade)
-  reviews MonitoringReview[]
+  sheet      MonitoringSheet    @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  recordedBy User?              @relation("MonitoringEntryRecorder", fields: [recordedById], references: [id])
+  reviews    MonitoringReview[]
 
   @@index([sheetId, recordedAt])
 }
@@ -961,24 +1013,24 @@ model HandoverNote {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model DiagnosticTest {
-  id           String   @id @default(uuid()) @db.Uuid
-  facilityId   String   @db.Uuid
-  name         String
-  code         String?
-  testType     TestType @default(LAB)
-  category     String?
-  specimenType String?
-  unit         String?
-  referenceLow  Float?
-  referenceHigh Float?
-  criticalLow   Float?
-  criticalHigh  Float?
-  resultKind   String   @default("NUMERIC") // NUMERIC | TEXT | REPORT
-  price        Decimal  @default(0) @db.Decimal(12, 2)
+  id              String   @id @default(uuid()) @db.Uuid
+  facilityId      String   @db.Uuid
+  name            String
+  code            String?
+  testType        TestType @default(LAB)
+  category        String?
+  specimenType    String?
+  unit            String?
+  referenceLow    Float?
+  referenceHigh   Float?
+  criticalLow     Float?
+  criticalHigh    Float?
+  resultKind      String   @default("NUMERIC") // NUMERIC | TEXT | REPORT
+  price           Decimal  @default(0) @db.Decimal(12, 2)
   turnaroundHours Int?
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@unique([facilityId, name])
   @@index([facilityId, testType, isActive])
@@ -1030,24 +1082,24 @@ model Household {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Insurance {
-  id                    String    @id @default(uuid()) @db.Uuid
-  facilityId            String    @db.Uuid
-  patientId             String    @db.Uuid
-  provider              String
-  planName              String?
-  policyNumber          String?
-  principalInsured      Boolean   @default(true)
+  id                     String    @id @default(uuid()) @db.Uuid
+  facilityId             String    @db.Uuid
+  patientId              String    @db.Uuid
+  provider               String
+  planName               String?
+  policyNumber           String?
+  principalInsured       Boolean   @default(true)
   // Set when a dependant is covered under the household principal's policy.
-  inheritedFromPatientId String?  @db.Uuid
-  validFrom             DateTime? @db.Date
-  validTo               DateTime? @db.Date
+  inheritedFromPatientId String?   @db.Uuid
+  validFrom              DateTime? @db.Date
+  validTo                DateTime? @db.Date
   // { "Outpatient": "100%", "Lab": "80%", "Copay": 500, ... }
-  coverageDetails       Json      @default("{}")
-  authorizationRequired Boolean   @default(false)
-  isActive              Boolean   @default(true)
-  notes                 String?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  coverageDetails        Json      @default("{}")
+  authorizationRequired  Boolean   @default(false)
+  isActive               Boolean   @default(true)
+  notes                  String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
@@ -1081,10 +1133,10 @@ enum EmergencyStatus {
 }
 
 model EmergencyEncounter {
-  id         String @id @default(uuid()) @db.Uuid
-  facilityId String @db.Uuid
+  id         String  @id @default(uuid()) @db.Uuid
+  facilityId String  @db.Uuid
   // Always set: either a real patient or the temporary record created on arrival.
-  patientId  String @db.Uuid
+  patientId  String  @db.Uuid
   caseId     String? @db.Uuid
 
   presentingName  String
@@ -1119,21 +1171,21 @@ model EmergencyEncounter {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model DrugCatalogue {
-  id           String   @id @default(uuid()) @db.Uuid
-  facilityId   String   @db.Uuid
-  name         String
-  genericName  String?
-  form         String?
-  strength     String?
-  defaultRoute DrugRoute @default(ORAL)
-  defaultDose  String?
+  id               String    @id @default(uuid()) @db.Uuid
+  facilityId       String    @db.Uuid
+  name             String
+  genericName      String?
+  form             String?
+  strength         String?
+  defaultRoute     DrugRoute @default(ORAL)
+  defaultDose      String?
   defaultFrequency String?
-  category     String?
-  unitPrice    Decimal  @default(0) @db.Decimal(12, 2)
-  isControlled Boolean  @default(false)
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  category         String?
+  unitPrice        Decimal   @default(0) @db.Decimal(12, 2)
+  isControlled     Boolean   @default(false)
+  isActive         Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   @@unique([facilityId, name, strength])
   @@index([facilityId, isActive])
@@ -1155,23 +1207,23 @@ enum NursingTaskPriority {
 // A doctor's actionable instruction to nursing staff — distinct from a
 // medication order, which is executed through the drug chart.
 model NursingTask {
-  id          String              @id @default(uuid()) @db.Uuid
-  facilityId  String              @db.Uuid
-  patientId   String              @db.Uuid
-  caseId      String?             @db.Uuid
-  orderedById String?             @db.Uuid
-  title       String
-  instructions String?
-  priority    NursingTaskPriority @default(ROUTINE)
-  status      NursingTaskStatus   @default(PENDING)
+  id             String              @id @default(uuid()) @db.Uuid
+  facilityId     String              @db.Uuid
+  patientId      String              @db.Uuid
+  caseId         String?             @db.Uuid
+  orderedById    String?             @db.Uuid
+  title          String
+  instructions   String?
+  priority       NursingTaskPriority @default(ROUTINE)
+  status         NursingTaskStatus   @default(PENDING)
   // Recurring tasks ("every 4 hours"); null means one-off.
   frequencyHours Int?
-  dueAt       DateTime?
-  completedById String?           @db.Uuid
-  completedAt DateTime?
+  dueAt          DateTime?
+  completedById  String?             @db.Uuid
+  completedAt    DateTime?
   completionNote String?
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 
   patient Patient @relation("NursingTaskPatient", fields: [patientId], references: [id])
 
@@ -1205,15 +1257,15 @@ model BookingRequest {
   reference  String @unique
 
   // Returning patients resolve to an existing record; new ones do not.
-  patientId    String? @db.Uuid
-  isNewPatient Boolean @default(true)
+  patientId    String?   @db.Uuid
+  isNewPatient Boolean   @default(true)
   fullName     String
   phone        String
   email        String?
   dateOfBirth  DateTime? @db.Date
 
-  departmentId String?   @db.Uuid
-  doctorId     String?   @db.Uuid
+  departmentId String?  @db.Uuid
+  doctorId     String?  @db.Uuid
   requestedAt  DateTime
   reason       String?
 
@@ -1221,7 +1273,7 @@ model BookingRequest {
   symptomSummary  String?
   symptomDuration String?
   severity        Int?
-  redFlags        Json          @default("[]")
+  redFlags        Json           @default("[]")
   routing         TriageRouting?
 
   status        BookingStatus @default(PENDING)
@@ -1266,8 +1318,8 @@ model Payment {
   /// separately so collections are never overstated by the change in the till.
   changeGiven Decimal @default(0) @db.Decimal(12, 2)
 
-  receivedById String?   @db.Uuid
-  receivedAt   DateTime  @default(now())
+  receivedById String?  @db.Uuid
+  receivedAt   DateTime @default(now())
 
   isVoided   Boolean   @default(false)
   voidReason String?
@@ -1304,10 +1356,10 @@ model Message {
   id         String @id @default(uuid()) @db.Uuid
   facilityId String @db.Uuid
 
-  senderId     String  @db.Uuid
-  recipientId  String  @db.Uuid
+  senderId    String  @db.Uuid
+  recipientId String  @db.Uuid
   /// Threading is a self-reference: a reply points at what it answers.
-  parentId     String? @db.Uuid
+  parentId    String? @db.Uuid
 
   subject  String?
   body     String
@@ -1340,17 +1392,17 @@ model Message {
 /// cannot price them differently — which is why selecting one is mandatory for
 /// new encounters even though historical records are left unclassified.
 model EncounterTypeConfig {
-  id          String  @id @default(uuid()) @db.Uuid
-  facilityId  String  @db.Uuid
-  name        String
-  description String?
+  id                  String  @id @default(uuid()) @db.Uuid
+  facilityId          String  @db.Uuid
+  name                String
+  description         String?
   /// Helpful when building a clinic timetable; not enforced on the encounter.
   defaultDurationMins Int?
-  isActive    Boolean @default(true)
-  sortOrder   Int     @default(0)
+  isActive            Boolean @default(true)
+  sortOrder           Int     @default(0)
   /// Seeded types every facility gets. Protected from deletion so a report
   /// written against "Emergency" cannot stop working because someone tidied up.
-  isSystem    Boolean @default(false)
+  isSystem            Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1375,7 +1427,7 @@ model ClinicSchedule {
   departmentId    String? @db.Uuid
 
   /// 0 = Sunday … 6 = Saturday, matching JavaScript's getDay().
-  dayOfWeek Int
+  dayOfWeek    Int
   /// Minutes from midnight. Stored as numbers so slot arithmetic needs no
   /// parsing, and so a clinic is never accidentally compared as text.
   startMinutes Int
@@ -1388,9 +1440,9 @@ model ClinicSchedule {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  facility      Facility            @relation(fields: [facilityId], references: [id])
-  encounterType EncounterTypeConfig @relation(fields: [encounterTypeId], references: [id], onDelete: Cascade)
-  department    Department?         @relation(fields: [departmentId], references: [id])
+  facility      Facility               @relation(fields: [facilityId], references: [id])
+  encounterType EncounterTypeConfig    @relation(fields: [encounterTypeId], references: [id], onDelete: Cascade)
+  department    Department?            @relation(fields: [departmentId], references: [id])
   doctors       ClinicScheduleDoctor[]
 
   @@index([facilityId, dayOfWeek, isActive])
@@ -1485,11 +1537,11 @@ enum ResuscitationOutcome {
 /// the clock rather than typed, so the timeline stays accurate even when nobody
 /// has time to look at a watch.
 model ResuscitationEvent {
-  id          String  @id @default(uuid()) @db.Uuid
-  facilityId  String  @db.Uuid
+  id                   String  @id @default(uuid()) @db.Uuid
+  facilityId           String  @db.Uuid
   /// May be the temporary record created for an unidentified arrival.
-  patientId   String  @db.Uuid
-  caseId      String? @db.Uuid
+  patientId            String  @db.Uuid
+  caseId               String? @db.Uuid
   emergencyEncounterId String? @db.Uuid
 
   type      ResuscitationType @default(CODE_BLUE)
@@ -1510,7 +1562,7 @@ model ResuscitationEvent {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  patient Patient                  @relation("ResuscitationPatient", fields: [patientId], references: [id])
+  patient Patient                      @relation("ResuscitationPatient", fields: [patientId], references: [id])
   entries ResuscitationTimelineEntry[]
 
   @@index([facilityId, startedAt])
@@ -1519,17 +1571,17 @@ model ResuscitationEvent {
 
 /// One action during a resuscitation, stamped against the call time.
 model ResuscitationTimelineEntry {
-  id      String @id @default(uuid()) @db.Uuid
-  eventId String @db.Uuid
+  id         String @id @default(uuid()) @db.Uuid
+  eventId    String @db.Uuid
   facilityId String @db.Uuid
 
   /// Seconds since the event began. Stored rather than derived so the timeline
   /// survives any later correction to the start time.
   timeOffsetSeconds Int
-  action  String
-  detail  String?
+  action            String
+  detail            String?
   /// e.g. { drug: 'Adrenaline', dose: '1 mg', route: 'IV' } or { joules: 200 }
-  meta    Json    @default("{}")
+  meta              Json    @default("{}")
 
   performedById String   @db.Uuid
   /// Actual wall clock, kept alongside the offset for the legal record.
@@ -1582,28 +1634,28 @@ model Order {
   caseId      String? @db.Uuid
   admissionId String? @db.Uuid
 
-  type      OrderType
+  type         OrderType
   /// What a nurse reads on the worklist: "Turn and reposition", "Metformin 500mg".
-  name      String
+  name         String
   /// Shape varies by type — a drug carries dose/route/frequency, a nursing action
   /// carries the action and how often. Kept flexible so a ward can express an
   /// instruction we did not anticipate without a migration.
-  details   Json      @default("{}")
+  details      Json      @default("{}")
   /// Why this was ordered. Written down because an instruction whose purpose is
   /// unknown is the first thing to be skipped when the ward is busy.
-  goal      String?
+  goal         String?
   instructions String?
 
   /// Null for a one-off. Set for anything recurring, e.g. 2 for Q2H.
   frequencyHours Float?
-  priority  NursingTaskPriority @default(ROUTINE)
-  status    OrderStatus         @default(ACTIVE)
+  priority       NursingTaskPriority @default(ROUTINE)
+  status         OrderStatus         @default(ACTIVE)
 
-  orderedById   String    @db.Uuid
-  startAt       DateTime  @default(now())
-  stopAt        DateTime?
-  discontinuedById String?  @db.Uuid
-  discontinuedAt   DateTime?
+  orderedById       String    @db.Uuid
+  startAt           DateTime  @default(now())
+  stopAt            DateTime?
+  discontinuedById  String?   @db.Uuid
+  discontinuedAt    DateTime?
   discontinueReason String?
 
   /// Set when a nurse opened a monitoring sheet from this order, so the chart
@@ -1691,4 +1743,54 @@ model MonitoringReview {
 
   @@index([facilityId, resolvedAt])
   @@index([sheetId])
+}
+
+enum ClinicalAlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  ACTED_ON
+  RESOLVED
+}
+
+enum ClinicalAlertSeverity {
+  WARNING
+  CRITICAL
+}
+
+/// A safety-critical event that must be handed to a named clinician and closed
+/// deliberately. Operational reminders remain derived; clinical deterioration
+/// is persistent because delivery, acknowledgement and action must be auditable.
+model ClinicalAlert {
+  id               String                @id @default(uuid()) @db.Uuid
+  facilityId       String                @db.Uuid
+  patientId        String                @db.Uuid
+  assignedToId     String?               @db.Uuid
+  sourceType       String
+  sourceId         String                @db.Uuid
+  latestEntryId    String?               @db.Uuid
+  sourceKey        String?
+  dedupeKey        String
+  category         String                @default("OBSERVATION")
+  severity         ClinicalAlertSeverity @default(CRITICAL)
+  status           ClinicalAlertStatus   @default(OPEN)
+  title            String
+  detail           String?
+  latestValue      String?
+  latestUnit       String?
+  normalizedAt     DateTime?
+  acknowledgedById String?               @db.Uuid
+  acknowledgedAt   DateTime?
+  actionById       String?               @db.Uuid
+  actionAt         DateTime?
+  actionNote       String?
+  resolvedById     String?               @db.Uuid
+  resolvedAt       DateTime?
+  resolution       String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@index([facilityId, status, severity, createdAt])
+  @@index([facilityId, dedupeKey, resolvedAt])
+  @@index([patientId, status])
+  @@index([assignedToId, status])
 }

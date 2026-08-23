@@ -1,0 +1,122 @@
+AWIBI EHR + AWIBI IDENTITY — MANUAL / EXTERNAL SETUP REQUIRED
+Last updated: 16 August 2026 (Africa/Lagos)
+
+PURPOSE
+This file contains work that cannot be made production-complete by local source code alone. Do not place passwords, API keys, NINs, patient data, certificates, or private database URLs in this file or in Git.
+
+1. RELEASE OWNERSHIP AND CLINICAL GOVERNANCE
+[ ] Name a release owner, clinical safety officer, data protection officer, security owner, diagnostics owner, pharmacy owner, and incident commander.
+[ ] Before the next beta, rotate every admin/demo credential or access code that appeared in a screenshot, status, chat, shared document, or terminal recording. Never reuse a local demo secret in a hosted environment.
+[ ] For hosted DEMO_MODE, set a unique DEMO_ACCESS_CODE of at least 16 characters and restrict the beta URL to named testers where practical. Use synthetic data only.
+[ ] Approve the exact pilot scope, facilities, roles, synthetic/real-data boundary, rollback criteria, support hours, and escalation contacts.
+[ ] Obtain signed facility approval for every diagnostic test, specimen rule, method/analyser, unit, reference interval, critical interval, and turnaround target.
+[ ] Approve specialist co-signing, corrected-report, addendum, critical-call, read-back, referral, and external-result policies.
+[ ] Approve paediatric, pregnancy, elderly, renal/hepatic, and other population-specific decision-support boundaries.
+[ ] Establish a clinical content review calendar, named reviewer, evidence version, effective date, expiry date, and emergency withdrawal process.
+
+2. LEGAL, PRIVACY, AND IDENTITY AUTHORITY
+[ ] Engage qualified Nigerian health/data-protection counsel; complete and approve the DPIA and privacy notices before real patient use.
+[ ] Document controller/processor roles for Awibi, each facility, affiliates, cloud vendors, notification providers, and diagnostic providers.
+[ ] Approve purpose, lawful basis, consent language, retention, deletion, legal hold, access/correction, deceased-person, guardian/dependant, and dispute procedures.
+[ ] Obtain the required NIMC/approved identity-verification authority and integration agreement. Do not imitate a registry or use raw NIN matching as an informal shortcut.
+[ ] Decide whether vNIN/tokenised verification is required and document what may be retained after verification.
+[ ] Approve the pairwise-identifier federation, facility onboarding, link correction, merge, unlink/revoke, and audit-disclosure procedures.
+[ ] Conduct trademark/name clearance and finalize public terminology for Awibi Identity and any continuity-code branding.
+[ ] Contractually define cross-border processing and country/regional data-residency before continental rollout.
+
+3. PRODUCTION DATABASES, RLS, AND MIGRATIONS
+[ ] Provision separate production PostgreSQL databases/accounts for EHR and Identity; never reuse the local databases.
+[ ] Create least-privilege runtime, migration, reporting, backup, and break-glass database roles.
+[ ] Design, peer-review, migrate, and test PostgreSQL RLS table by table. Current Prisma facility filters are application isolation, not database RLS.
+[ ] Convert schema changes into reviewed versioned migrations; do not use `prisma db push` in production.
+[ ] Add concurrency-safe unique/idempotency constraints for Identity source/version delivery after reviewing existing production data.
+[ ] Define patient/facility merge, identifier correction, duplicate resolution, and immutable audit-history migrations.
+[ ] Run restore-tested encrypted backups, point-in-time recovery, retention tiers, regional copies, and documented RPO/RTO exercises.
+[ ] Run migration rehearsal and rollback against a production-sized anonymised dataset.
+
+4. SECRETS, ENCRYPTION, NETWORK, AND PLATFORM SECURITY
+[ ] Generate independent high-entropy JWT, refresh, cookie, facility-service, webhook, database, and provider secrets in a managed secret store.
+[ ] Configure KMS/HSM keys, envelope encryption, rotation, revocation, access approval, audit, backup, and disaster recovery.
+[ ] Replace raw high-risk identifier storage with the approved tokenisation/field-protection design while retaining authorised matching capability.
+[ ] Configure production domains, TLS certificates, HSTS, secure cookies, exact CORS allowlists, CSP, WAF, rate limits, DDoS protection, and trusted proxies.
+[ ] Configure production session expiry, idle timeout, refresh-token rotation/reuse detection, device/session revocation, MFA, account recovery, and staff offboarding.
+[ ] Define audited break-glass access with reason, limited duration, notification, retrospective review, and sanctions.
+[ ] Run independent threat modelling, SAST/dependency/secret scans, penetration testing, API abuse tests, and remediation verification.
+[ ] Keep development/demo bypass flags impossible to enable in production and verify the startup guards in the deployment pipeline.
+
+5. IDENTITY TRUST AND MESSAGE DELIVERY
+[ ] Implement cryptographic signing and key rotation for EHR-to-Identity envelopes; local beta provenance/hash/shared-secret protection is not a digital signature.
+[ ] Decide the production assurance levels and evidence accepted for registration, recovery, facility linking, and high-risk changes.
+[ ] Configure email/SMS/WhatsApp/USSD providers only after contracts, approved templates, consent/opt-out rules, sender identities, rate limits, and delivery webhooks exist.
+[ ] Implement delivery retry/dead-letter/reconciliation dashboards without exposing clinical content in provider logs.
+[ ] Run link, revoke, correction, duplicate, deceased-person, guardian, lost-phone, SIM-swap, account-recovery, and contested-access tabletop tests.
+[ ] Define the patient-facing support and appeal pathway for every Identity access-log event and incorrect report.
+
+6. DIAGNOSTICS, PACS, LABORATORY, AND DEVICES
+[ ] Select and integrate the production PACS/VNA/DICOM viewer, modality worklist, storage lifecycle, encryption, backup, and diagnostic-monitor standards.
+[ ] Integrate barcode/accession printers, scanners, specimen labels, rejection/recollection reasons, chain of custody, and analyser interfaces.
+[ ] Approve laboratory QC, calibration, delta checks, panic-value call/read-back, amended reports, downtime registers, and external referral reconciliation.
+[ ] Validate modality/device integrations for X-ray, ultrasound, CT, MRI, mammography, fluoroscopy, ECG, and affiliated providers.
+[ ] Validate printer layouts and scanning on the exact Nigerian facility hardware to be deployed.
+[ ] Establish biomedical/IT device inventory, patching, service, replacement, and downtime contacts.
+
+7. MEDICINES, CLINICAL KNOWLEDGE, AND PATIENT SAFETY
+[ ] License and integrate an authoritative drug interaction, allergy, duplication, dose, pregnancy, renal/hepatic, and formulary knowledge source.
+[ ] Validate drug naming, strengths, pack sizes, controlled-drug workflow, procurement, inventory, dispensing, returns, expiry, stock counts, and recall procedures.
+[ ] Validate WHO paediatric anthropometry/BMI datasets and charts under a named paediatric owner; adult BMI bands must never classify children.
+[ ] Establish clinical-hazard logs, safety cases, severity/likelihood scoring, mitigation owners, residual-risk acceptance, and post-release surveillance.
+[ ] Run realistic Nigeria-context simulations for emergency arrival without ID, unreliable network, shared family phone, duplicate names, referral, transfusion, critical lab, and result correction.
+
+8. OBSERVABILITY, SUPPORT, AND INCIDENT RESPONSE
+[ ] Configure privacy-safe application logs, metrics, traces, uptime checks, database monitoring, queue monitoring, alert routing, and on-call ownership.
+[ ] Configure error tracking with patient data scrubbing and confirm no tokens, passwords, NINs, clinical text, or document URLs enter third-party telemetry.
+[ ] Define severity levels, response times, customer notification, regulatory/legal escalation, evidence preservation, breach response, and post-incident review.
+[ ] Perform backup restore, region outage, database corruption, Identity outage, notification outage, ransomware, compromised staff account, and mass-revocation exercises.
+[ ] Establish facility help desk, super-user training, role-based SOPs, onboarding/offboarding, release notes, known-issue notices, and escalation SLAs.
+
+9. PERFORMANCE, MOBILE, OFFLINE, ACCESSIBILITY, AND SCALE
+[ ] Set measurable SLOs for availability, latency, error rate, sync delay, report delivery, critical-alert acknowledgement, recovery, and support response.
+[ ] Run load/soak/failover tests at realistic ward, hospital, state, national, and continental concurrency/data volumes.
+[ ] Test throttled 2G/3G, packet loss, intermittent power, browser restart, token refresh, conflict, duplicate response, and reconnect on low-cost physical Android devices.
+[ ] Finish the installable PWA, maskable icons, secure offline draft encryption, idempotency keys, retention/remote wipe, queue inspector, and conflict resolution.
+[ ] Complete keyboard, screen-reader, focus, contrast, touch-target, zoom, language/plain-language, and WCAG audit with disabled users.
+[ ] Package and support an on-prem/offline-capable deployment for facilities that cannot depend on continuous internet.
+[ ] Self-host/remove avoidable external font/assets and measure first/repeat load under low-end CPU and network profiles.
+
+10. INTEROPERABILITY AND NATIONAL/CONTINENTAL GOVERNANCE
+[ ] Define and test the FHIR version/profiles, terminology service, code systems, patient matching, consent, provenance, document, diagnostic-report, and audit mappings.
+[ ] Contract and test HIE, laboratory, pharmacy, insurance, public-health, immunisation, and referral integrations individually.
+[ ] Establish facility registry, provider registry, endpoint directory, certificate lifecycle, conformance testing, version negotiation, and deprecation policy.
+[ ] Establish national/continental governance that prevents one commercial tenant or country from becoming an unintended central identity authority.
+[ ] Define data-quality dashboards, duplicate/merge review, terminology governance, correction propagation, and interoperability incident procedures.
+[ ] Design and govern the organisation/branch network layer. A common UPID currently identifies a person but does not grant Branch B access to Branch A's record.
+[ ] Procure/build and validate the enterprise MPI: scored matching, verified attributes, duplicate queue, survivorship, merge/unmerge, corrections, disputed identity, newborns/twins, guardians/dependants, and FHIR Patient/$match conformance.
+
+11. FINAL GO-LIVE GATES
+[ ] All automated suites pass from a clean build and versioned migration in CI.
+[ ] Independent clinical safety, privacy/legal, security, accessibility, performance, disaster recovery, and interoperability evidence is signed.
+[ ] Pilot users complete observed end-to-end acceptance tests using approved synthetic data before controlled real-data entry.
+[ ] Every critical/high defect is closed or explicitly risk-accepted by the accountable owner.
+[ ] Production credentials, domains, monitoring, backups, on-call, support, rollback, and communication plans are proven.
+[ ] A final go/no-go meeting records the decision, scope, date, owners, evidence, residual risks, and rollback trigger.
+
+12. AWIBI CLINICAL AI FOR VOICE AND HANDWRITING
+[ ] Deploy or select the Awibi clinical AI service that implements POST /transcribe-soap and POST /ocr-soap and returns structured JSON for chiefComplaint, history, reviewOfSystems, examination, assessment, and plan.
+[ ] Implement POST /nursing-observation on the same service. It must accept source_file plus patient_id, monitoring_sheet_id, monitoring_type, monitoring_title, capture_type, and field_definitions; return observation.values, observation.notes, observation.abnormalSuggested, transcript, and confidence; and never save an observation or complete an order itself.
+[ ] Set AWIBI_CLINICAL_AI_URL in the EHR backend environment to that service base URL. Set AWIBI_CLINICAL_AI_KEY through the secret store if the service requires bearer authentication. Never commit either value.
+[ ] Confirm the service accepts WebM/MP3/M4A/WAV/OGG audio and JPG/PNG/WebP/PDF documents up to 25 MB, deletes source files after processing, and does not train on patient content.
+[ ] Complete a DPIA and processing agreement for the AI service, including data location, subprocessors, retention, deletion, incident notice, access control, and audit evidence.
+[ ] Validate Nigerian English, common Nigerian names, code-switching/accent variation, clinical abbreviations, noisy wards, phone recordings, camera shadows, cursive handwriting, and low-cost Android image quality.
+[ ] Benchmark each SOAP heading separately for omission, hallucination, negation, drug/dose, number/unit, laterality, pregnancy, paediatric, and allergy errors. Define an approved minimum and block release if it is missed.
+[ ] Keep clinician review mandatory. AI output remains a proposal and must never sign, place an order, alter a diagnosis, or write into the patient record autonomously.
+[ ] Configure timeouts, rate limits, cost limits, retry/idempotency, downtime messaging, and a manual typing fallback. The EHR currently times out an AI request after 30 seconds.
+
+13. NURSING PROFESSIONAL PRACTICE AND ETIQUETTE GOVERNANCE
+[ ] Create a modern, locally approved nursing professional-practice standard with nursing leadership, labour/HR, clinical safety, infection-control, safeguarding, accessibility, and legal review.
+[ ] Keep professional-practice training, onboarding, competency assessment, and supervisor feedback separate from patient monitoring entries. A conduct checklist must never appear as though it were a patient observation.
+[ ] Retain patient-centred courtesy, privacy, consent, empathy, punctual handover, accountability, scope/referral, error reporting, quiet-zone, appearance/PPE, and respectful teamwork principles.
+[ ] Reject or rewrite rules that could suppress patient-safety escalation or reproduce unsafe hierarchy. Staff must be able and required to question an unsafe instruction, use the chain of escalation, and speak up without retaliation.
+[ ] Define who can see learning results, retention/appeal/remediation rules, version/effective dates, evidence of completion, and how competency is reassessed without turning educational records into punitive surveillance.
+
+CURRENT STATE
+The local system is approved only for continued synthetic-data beta testing. The code and local test database do not by themselves complete the external, organisational, legal, clinical-governance, infrastructure, or independent-assurance work above.

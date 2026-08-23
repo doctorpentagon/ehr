@@ -26,13 +26,19 @@ AWIBI SCOUT/
 # Local working notes and audit write-ups.
 *.md
 !README.md
+!BETA_FEEDBACK_MASTER_CHECKLIST.md
+!PRE_BETA_RELEASE_GATE_2026-08-23.md
 !Awibi-EHR-Backend/**/*.md
 !Awibi-EHR-Frontend/**/*.md
+!IDENTITY RESEARCH/README.md
 README.html
 *.ps1
+*.docx
 
 # Local tool settings.
 .claude/
+.codex-doc-review/
+.codex-runtime/
 
 # Disabled nested repositories, kept on disk so their history is recoverable.
 **/.git.disabled-*/

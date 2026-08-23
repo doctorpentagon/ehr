@@ -30,7 +30,7 @@ export default function GoogleCallback() {
       .unwrap()
       .then(({ user, facility, subscription }) => {
         setAuth({ user, facility, subscription });
-        navigate('/dashboard', { replace: true });
+        navigate(user?.role === 'SUPER_ADMIN' ? '/dashboard/platform' : '/dashboard', { replace: true });
       })
       .catch(() => {
         localStorage.removeItem('accessToken');

@@ -3,10 +3,9 @@ export const PERMISSIONS = {
   // the backend enforces these, this map only renders the sidebar.
   // ADMIN = facility owner: sees everything in their facility, but does not
   // author signed clinical content (no clinical_write/prescriptions_write).
-  SUPER_ADMIN: { overview:1, patients:1, cases:1, appointments:1, lab:1, departments:1, staff:1, affiliates:1, billing:1, subscription:1, reports:1, settings:1, admissions:1, beds:1, orders:1, support:1, patient_demographics_write:1,
-                 nursing:1, monitoring:1, drug_admin:1, handover:1, growth:1, bookings:1, emergency:1, emergency_write:1, households:1,
-                 // Cross-facility platform oversight belongs to Awibi staff only.
-                 platform:1 },
+  // Awibi platform operators never inherit a hospital's clinical permissions.
+  // The backend tenant middleware enforces the same boundary independently.
+  SUPER_ADMIN: { platform:1, settings:1, support:1 },
   ADMIN:       { overview:1, patients:1, cases:1, appointments:1, lab:1, departments:1, staff:1, affiliates:1, billing:1, subscription:1, reports:1, settings:1, admissions:1, beds:1, orders:1, support:1, patient_demographics_write:1,
                  nursing:1, monitoring:1, drug_admin:1, handover:1, growth:1, bookings:1, emergency:1, emergency_write:1, households:1 },
   RECORDS:     { overview:1, patients:1, appointments:1, settings:1, support:1, patient_demographics_write:1, bookings:1, emergency:1, emergency_write:1, households:1 },
@@ -21,12 +20,18 @@ const SUB_ROLE_EXTRAS = {
   // Admission and discharge are medical decisions. Doctors had no `admissions`
   // permission, so a patient could be admitted and never discharged by the
   // person who decides they are fit to leave — beds never came free.
-  DOCTOR:     { patients:1, cases:1, appointments:1, lab:1, reports:1, prescriptions:1, orders:1, vitals_write:1, clinical_write:1, prescriptions_write:1,
+  DOCTOR:     { patients:1, cases:1, appointments:1, lab:1, diagnostic_order:1, reports:1, prescriptions:1, orders:1, vitals_write:1, clinical_write:1, prescriptions_write:1,
                 nursing:1, monitoring:1, monitoring_review:1, drug_admin:1, handover:1, growth:1, growth_write:1,
                 admissions:1, beds:1, emergency:1, emergency_write:1, households:1 },
   NURSE:      { patients:1, cases:1, appointments:1, lab:1, admissions:1, beds:1, orders:1, vitals:1, vitals_write:1,
                 nursing:1, monitoring:1, monitoring_write:1, drug_admin:1, drug_admin_write:1, handover:1, handover_write:1, growth:1, growth_write:1, emergency:1, emergency_write:1 },
-  LAB:        { lab:1, transfer:1 },
+  LAB:        { lab:1, diagnostic_process:1, transfer:1 },
+  RADIOLOGIST: { lab:1, diagnostic_process:1, transfer:1 },
+  RADIOGRAPHER: { lab:1, diagnostic_process:1, transfer:1 },
+  HAEMATOLOGIST: { lab:1, diagnostic_process:1, transfer:1 },
+  CHEMICAL_PATHOLOGIST: { lab:1, diagnostic_process:1, transfer:1 },
+  HISTOPATHOLOGIST: { lab:1, diagnostic_process:1, transfer:1 },
+  MICROBIOLOGIST: { lab:1, diagnostic_process:1, transfer:1 },
   PHARMACIST: { patients:1, prescriptions:1, billing:1 },
 };
 
@@ -34,7 +39,7 @@ export function can(role, subRole, module) {
   // A null module means "open to any signed-in member of staff" — used by
   // Messages, where gating a nurse out of telling a doctor something would
   // defeat the point of having it.
-  if (module == null) return true;
+  if (module == null) return role !== 'SUPER_ADMIN';
   const base = PERMISSIONS[role] || {};
   const extras = subRole ? (SUB_ROLE_EXTRAS[subRole] || {}) : {};
   return !!(base[module] || extras[module]);
@@ -43,8 +48,10 @@ export function can(role, subRole, module) {
 // section: groups items visually in the sidebar
 export const NAV_ITEMS = [
   { key: 'overview',     label: 'Overview',        icon: 'LayoutDashboard', path: '/dashboard',              section: 'General', end: true },
-  { key: 'patients',     label: 'Patients',         icon: 'Users',           path: '/dashboard/patients',     section: 'Clinical' },
-  { key: 'appointments', label: 'Appointments',     icon: 'Calendar',        path: '/dashboard/appointments', section: 'Clinical' },
+  // Patient identity, registration and scheduling are shared access functions,
+  // not "doctor-only clinical" work. Write controls still follow RBAC.
+  { key: 'patients',     label: 'Patient records',  icon: 'Users',           path: '/dashboard/patients',     section: 'Patient Access' },
+  { key: 'appointments', label: 'Appointments',     icon: 'Calendar',        path: '/dashboard/appointments', section: 'Patient Access' },
   // "Cases" matches the clinical language used in the designs and on the ward.
   { key: 'cases',        label: 'Cases',            icon: 'FileText',        path: '/dashboard/cases',        section: 'Clinical' },
   // Sits after Cases: a clinician reaches for a score or a drip rate while
@@ -54,9 +61,9 @@ export const NAV_ITEMS = [
   { key: null,           label: 'Scout',            icon: 'Compass',         path: '/dashboard/scout',        section: 'Clinical', badge: 'PRO', featured: true },
   { key: 'lab',          label: 'Diagnostics',      icon: 'FlaskConical',    path: '/dashboard/lab',          section: 'Clinical' },
   { key: 'admissions',   label: 'Admissions',       icon: 'BedDouble',       path: '/dashboard/admissions',   section: 'Clinical' },
-  { key: 'emergency',    label: 'Emergency',        icon: 'AlertTriangle',   path: '/dashboard/emergency',    section: 'Clinical' },
-  { key: 'bookings',     label: 'Booking requests', icon: 'CalendarCheck',   path: '/dashboard/bookings',     section: 'Clinical' },
-  { key: 'patients',     label: 'Enquiries',        icon: 'MessageSquare',   path: '/dashboard/inquiries',    section: 'Clinical' },
+  { key: 'emergency',    label: 'Emergency intake', icon: 'AlertTriangle',   path: '/dashboard/emergency',    section: 'Patient Access' },
+  { key: 'bookings',     label: 'Booking requests', icon: 'CalendarCheck',   path: '/dashboard/bookings',     section: 'Patient Access' },
+  { key: 'patients',     label: 'Enquiries',        icon: 'MessageSquare',   path: '/dashboard/inquiries',    section: 'Patient Access' },
   { key: 'monitoring',   label: 'Monitoring',       icon: 'Activity',        path: '/dashboard/nursing',      section: 'Nursing' },
   { key: 'drug_admin',   label: 'Drug chart',       icon: 'Pill',            path: '/dashboard/nursing/drug-chart', section: 'Nursing' },
   { key: 'handover',     label: 'Shift report',     icon: 'ClipboardList',   path: '/dashboard/nursing/shift-report',   section: 'Nursing' },
@@ -96,6 +103,12 @@ const ROLE_LABELS = {
   DOCTOR:      'Doctor',
   NURSE:       'Nurse',
   LAB:         'Diagnostics',
+  RADIOLOGIST: 'Radiologist',
+  RADIOGRAPHER: 'Radiographer / Imaging Technologist',
+  HAEMATOLOGIST: 'Haematologist',
+  CHEMICAL_PATHOLOGIST: 'Chemical Pathologist',
+  HISTOPATHOLOGIST: 'Histopathologist / Morbid Anatomist',
+  MICROBIOLOGIST: 'Medical Microbiologist',
   PHARMACIST:  'Pharmacist',
 };
 

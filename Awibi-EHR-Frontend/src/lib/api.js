@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { toast } from 'sonner';
 import { enqueue } from './offlineQueue';
+import { offlineOwnerKeyFromToken } from './offlinePolicy';
 
 /**
  * Where the API lives.
@@ -104,11 +105,16 @@ api.interceptors.response.use(
 
     if (isMutation && isNetworkError) {
       try {
+        const token = localStorage.getItem('accessToken');
+        const ownerKey = offlineOwnerKeyFromToken(token);
+        // File uploads cannot be represented safely as JSON, and anonymous
+        // work cannot be tied to the staff member and facility that created it.
+        if (!ownerKey || cfg.data instanceof FormData) return Promise.reject(err);
         await enqueue({
           method: cfg.method,
           url: cfg.url,
           data: cfg.data ? JSON.parse(cfg.data) : undefined,
-          headers: { Authorization: cfg.headers?.Authorization },
+          ownerKey,
         });
         toast.info('Saved offline — will sync when reconnected.', { duration: 4000 });
       } catch (_) {

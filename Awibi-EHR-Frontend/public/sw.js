@@ -22,7 +22,7 @@
  * The cache name carries a version. Bump it and every older cache is deleted on
  * activation, which is the escape hatch the previous version lacked.
  */
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE_NAME = `awibi-ehr-${VERSION}`;
 
 self.addEventListener('install', () => self.skipWaiting());

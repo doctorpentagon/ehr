@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:lan": "vite --host 0.0.0.0",
     "check:imports": "node scripts/check-imports.js src",
     "check:routes": "node scripts/check-routes.js src",
     "check": "npm run check:imports && npm run check:routes",
+    "test:unit": "node --test test/authErrors.test.js test/offlinePolicy.test.js",
     "build": "npm run check && vite build",
     "preview": "vite preview"
   },

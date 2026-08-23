@@ -9,7 +9,11 @@ import Modal from '@/components/ui/Modal';
 import useAuthStore from '@/stores/authStore';
 
 const ROLES = ['ADMIN', 'CLINICIAN', 'RECORDS'];
-const SUB_ROLES = ['DOCTOR', 'NURSE', 'LAB', 'PHARMACIST'];
+const SUB_ROLES = [
+  'DOCTOR', 'NURSE', 'LAB', 'RADIOLOGIST', 'RADIOGRAPHER',
+  'HAEMATOLOGIST', 'CHEMICAL_PATHOLOGIST', 'HISTOPATHOLOGIST',
+  'MICROBIOLOGIST', 'PHARMACIST',
+];
 const ROLE_COLOR = {
   ADMIN:      'bg-blue-100 text-blue-800',
   CLINICIAN:  'bg-green-100 text-green-800',

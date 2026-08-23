@@ -11,6 +11,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import EmptyState from '@/components/ui/EmptyState';
 import UPIDLookupModal from './UPIDLookupModal';
 import api from '@/lib/api';
+import { can } from '@/lib/permissions';
+import { useSelector } from 'react-redux';
 
 const STATUS_COLORS = {
   inpatient: 'bg-blue-100 text-blue-700',
@@ -30,6 +32,8 @@ function PatientStatusBadge({ status }) {
 
 export default function Patients() {
   const navigate = useNavigate();
+  const user = useSelector(state => state.auth?.user);
+  const mayRegister = can(user?.role, user?.subRole, 'patient_demographics_write');
   const [searchParams, setSearchParams] = useSearchParams();
   const [patients, setPatients] = useState([]);
   const [total, setTotal] = useState(0);
@@ -85,14 +89,16 @@ export default function Patients() {
             <IconScan className="size-4" />
             Patient ID lookup
           </Button>
-          <Button
-            size="sm"
-            className="bg-[#2D5BFF] hover:bg-[#1a45e0] gap-1.5"
-            onClick={() => navigate('/dashboard/patients/add')}
-          >
-            <IconPlus className="size-4" />
-            Add Patient
-          </Button>
+          {mayRegister && (
+            <Button
+              size="sm"
+              className="bg-[#2D5BFF] hover:bg-[#1a45e0] gap-1.5"
+              onClick={() => navigate('/dashboard/patients/add')}
+            >
+              <IconPlus className="size-4" />
+              Register Patient
+            </Button>
+          )}
         </div>
       </div>
 
@@ -142,8 +148,8 @@ export default function Patients() {
                   <EmptyState
                     icon={IconUsers}
                     title="No patients found"
-                    description="Register your first patient or adjust the search filters."
-                    action={{ label: 'Add Patient', onClick: () => navigate('/dashboard/patients/new') }}
+                    description={mayRegister ? 'Register your first patient or adjust the search filters.' : 'No matching patient record was found. Adjust the search filters.'}
+                    action={mayRegister ? { label: 'Register Patient', onClick: () => navigate('/dashboard/patients/add') } : undefined}
                   />
                 </TableCell>
               </TableRow>

@@ -41,6 +41,7 @@ export default function Login() {
   const [demoAccountId, setDemoAccountId] = useState('');
   const [demoMeta, setDemoMeta] = useState({ requiresAccessCode: false, hostedDemo: false });
   const [accessCode, setAccessCode] = useState('');
+  const [demoRetry, setDemoRetry] = useState(0);
   // loading → waking → ready | none | unreachable. Anything other than an
   // instant answer needs to be visible, or the page just looks broken.
   const [demoState, setDemoState] = useState('loading');
@@ -92,7 +93,7 @@ export default function Login() {
 
     fetchAccounts();
     return () => { active = false; clearTimeout(slowTimer); };
-  }, []);
+  }, [demoRetry]);
 
   const demoFacilities = useMemo(() => {
     const names = new Set(demoAccounts.map((account) => account.facility?.name).filter(Boolean));
@@ -117,7 +118,8 @@ export default function Login() {
     try {
       const result = await dispatch(login({ email, password })).unwrap();
       setAuth({ user: result.user, facility: result.facility });
-      navigate(result.user?.mustChangePassword ? '/dashboard/settings?passwordChange=required' : '/dashboard', { replace: true });
+      const home = result.user?.role === 'SUPER_ADMIN' ? '/dashboard/platform' : '/dashboard';
+      navigate(result.user?.mustChangePassword ? '/dashboard/settings?passwordChange=required' : home, { replace: true });
     } catch (err) {
       // Backend returns { requiresOtp: true } when email isn't verified yet
       if (err?.requiresOtp) {
@@ -141,7 +143,7 @@ export default function Login() {
         ...(demoMeta.requiresAccessCode ? { accessCode } : {}),
       })).unwrap();
       setAuth({ user: result.user, facility: result.facility });
-      navigate('/dashboard', { replace: true });
+      navigate(result.user?.role === 'SUPER_ADMIN' ? '/dashboard/platform' : '/dashboard', { replace: true });
     } catch (err) {
       // Name which of the two things went wrong rather than one vague message.
       if (err?.code === 'DEMO_CODE_REQUIRED') {
@@ -207,9 +209,14 @@ export default function Login() {
         <section className="rounded-xl border border-amber-200 bg-amber-50 p-4">
           <p className="font-semibold text-sm text-amber-900">Could not reach the demo server</p>
           <p className="text-xs text-amber-800 mt-0.5">
-            It may still be starting. Reload the page in a moment, or sign in with
-            an email and password below.
+            It may still be starting. Try again here, or sign in with an email and password below.
           </p>
+          <Button type="button" variant="outline" size="sm" className="mt-3 bg-white" onClick={() => {
+            setDemoState('loading');
+            setDemoRetry(value => value + 1);
+          }}>
+            Retry demo server
+          </Button>
         </section>
       )}
 

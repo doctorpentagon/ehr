@@ -238,7 +238,7 @@ async function run() {
       scheduledAt: new Date(Date.now() + 86_400_000).toISOString(),
       visitType: 'ROUTINE',
     });
-    await expectStatus('secondary facility cannot create lab order for primary patient', '/lab', secondaryToken, 404, {
+    await expectStatus('secondary facility administrator cannot create a diagnostic order', '/lab', secondaryToken, 403, {
       patientId: patient.id, testName: 'Isolation probe', testType: 'LAB',
     });
     await expectStatus('secondary facility cannot admit primary patient', '/admissions', secondaryToken, 404, {
@@ -565,6 +565,7 @@ async function run() {
         const loaded = await request(`/nursing/monitoring-sheets/${sheetId}`, { token: tokens.nurse });
         assert('fluid balance is computed from entries', loaded.data?.totals?.intakeMl === 150, `got ${loaded.data?.totals?.intakeMl}`);
 
+        await db.clinicalAlert.deleteMany({ where: { sourceId: sheetId } });
         await db.monitoringEntry.deleteMany({ where: { sheetId } });
         await db.monitoringSheet.delete({ where: { id: sheetId } });
       }
@@ -605,7 +606,7 @@ async function run() {
           const illegal = await request(`/lab/${labId}/status`, {
             token: tokens.lab, method: 'POST', body: { status: 'COMPLETED' },
           });
-          assert('invalid investigation transition is rejected', illegal.status === 409, `status ${illegal.status}`);
+          assert('final status cannot bypass the result-verification endpoint', illegal.status === 400, `status ${illegal.status}`);
 
           await request(`/lab/${labId}/status`, { token: tokens.lab, method: 'POST', body: { status: 'COLLECTED', specimenId: 'SMOKE-1' } });
           const inProgress = await request(`/lab/${labId}/status`, { token: tokens.lab, method: 'POST', body: { status: 'IN_PROGRESS' } });
@@ -1142,6 +1143,7 @@ async function run() {
         assert('status=ALL does not silently empty the list',
           (onChart.data?.sheets?.length || 0) > 0, `${onChart.data?.sheets?.length} sheets`);
 
+        await db.clinicalAlert.deleteMany({ where: { sourceId: sheet.data.id } });
         await db.monitoringEntry.deleteMany({ where: { sheetId: sheet.data.id } });
         await db.monitoringSheet.delete({ where: { id: sheet.data.id } });
       }
@@ -1300,6 +1302,7 @@ async function run() {
       assert('the nurse closes the loop',
         (await request(resolveUrl, { token: tokens.nurse, method: 'PUT', body: { resolution: 'Rechecked and confirmed' } })).status === 200);
 
+      await db.clinicalAlert.deleteMany({ where: { sourceId: id } });
       await db.monitoringReview.deleteMany({ where: { sheetId: id } });
       await db.monitoringEntry.deleteMany({ where: { sheetId: id } });
       await db.monitoringSheet.delete({ where: { id } });
@@ -1321,6 +1324,7 @@ async function run() {
           entry.data?.deviations?.spo2?.severity === expected,
           `got ${entry.data?.deviations?.spo2?.severity}`);
       }
+      await db.clinicalAlert.deleteMany({ where: { sourceId: vitals.data.id } });
       await db.monitoringEntry.deleteMany({ where: { sheetId: vitals.data.id } });
       await db.monitoringSheet.delete({ where: { id: vitals.data.id } });
     }
@@ -1636,11 +1640,10 @@ async function run() {
 
     assert('a critical saturation raises an alert',
       nurseAlerts.data?.alerts?.some((a) => a.category === 'OBSERVATION' && a.severity === 'CRITICAL'));
-    // Ten consecutive low saturations are one problem, not ten alerts. A list
-    // that scrolls is a list nobody reads. Scoped to this chart so an unrelated
-    // chart elsewhere in the facility cannot make the assertion lie either way.
+    // Ten consecutive low saturations are one safety episode, not ten alerts.
+    // Scope to this chart so an unrelated patient cannot make the assertion lie.
     const spo2Alerts = nurseAlerts.data.alerts.filter(
-      (a) => a.category === 'OBSERVATION' && a.id.endsWith(':spo2'),
+      (a) => a.category === 'OBSERVATION' && a.link?.endsWith(`/sheet/${sheet.data.id}`) && a.title === 'SpO2 is critical',
     );
     assert('repeated critical readings raise one alert, not one each',
       spo2Alerts.length === 1, `${spo2Alerts.length}`);
@@ -1659,10 +1662,22 @@ async function run() {
       `${labAlerts.data?.counts?.total}`);
     assert('critical items sort above warnings', nurseAlerts.data.alerts[0]?.severity === 'CRITICAL');
 
-    // Derived, not stored — so an alert disappears when the thing it describes
-    // is dealt with, rather than sitting in a queue looking urgent forever.
+    // Completing a chart is not clinical closure: the named lifecycle remains
+    // until a clinician records acknowledgement, action and outcome.
     await request(`/nursing/monitoring-sheets/${sheet.data.id}`, {
       token: tokens.nurse, method: 'PATCH', body: { status: 'COMPLETED' },
+    });
+    const afterChartClose = await request('/alerts', { token: tokens.doctor });
+    assert('closing the chart does not silently clear its critical episode',
+      afterChartClose.data.alerts.some((a) => a.id === spo2Alerts[0]?.id));
+    await request(`/alerts/${spo2Alerts[0]?.id}/acknowledge`, {
+      token: tokens.doctor, method: 'POST', body: {},
+    });
+    await request(`/alerts/${spo2Alerts[0]?.id}/action`, {
+      token: tokens.doctor, method: 'POST', body: { actionNote: 'Reviewed patient and repeated oxygen saturation after repositioning the probe.' },
+    });
+    await request(`/alerts/${spo2Alerts[0]?.id}/resolve`, {
+      token: tokens.doctor, method: 'POST', body: { resolution: 'Repeat saturation improved and the monitoring plan was updated.' },
     });
     for (let i = 0; i < 5; i += 1) {
       await request(`/orders/standing/${order.data.id}/execute`, {
@@ -1670,12 +1685,13 @@ async function run() {
       });
     }
     const after = await request('/alerts', { token: tokens.nurse });
-    assert('closing the chart clears its alert',
-      !after.data.alerts.some((a) => a.id.startsWith('critical:') && a.id.endsWith(':spo2')));
+    assert('named clinical closure clears the active alert',
+      !after.data.alerts.some((a) => a.id === spo2Alerts[0]?.id));
     assert('carrying out the order clears the overdue alert',
       !after.data.alerts.some((a) => a.id === `overdue:${order.data.id}`));
 
     await db.monitoringReview.deleteMany({ where: { sheetId: sheet.data.id } });
+    await db.clinicalAlert.deleteMany({ where: { sourceId: sheet.data.id } });
     await db.monitoringEntry.deleteMany({ where: { sheetId: sheet.data.id } });
     await db.monitoringSheet.delete({ where: { id: sheet.data.id } }).catch(() => {});
     await db.orderExecution.deleteMany({ where: { orderId: order.data.id } });
@@ -1747,6 +1763,7 @@ async function run() {
       entry.data?.deviations?.volumeMl?.severity === 'CRITICAL_LOW');
     assert('the charted volume feeds the fluid balance', entry.data?.outputMl === 12);
 
+    await db.clinicalAlert.deleteMany({ where: { sourceId: opened.data.sheet.id } });
     await db.monitoringEntry.deleteMany({ where: { sheetId: opened.data.sheet.id } });
     await db.monitoringSheet.delete({ where: { id: opened.data.sheet.id } }).catch(() => {});
     await db.orderExecution.deleteMany({ where: { orderId: order.data.id } });
