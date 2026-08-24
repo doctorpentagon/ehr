@@ -497,6 +497,22 @@ test('every sidebar item points at a module the backend knows', () => {
   assert.deepEqual(orphans, [], `sidebar items no role can reach: ${orphans.join(', ')}`);
 });
 
+test('diagnostics has its own top-level navigation section', () => {
+  const vm = require('node:vm');
+  const file = path.join(__dirname, '..', '..', 'Awibi-EHR-Frontend', 'src', 'lib', 'permissions.js');
+  const source = fs.readFileSync(file, 'utf8').replace(/^export\s+/gm, '').replace(/^import[^\n]*$/gm, '');
+  const context = { module: { exports: {} } };
+  vm.createContext(context);
+  vm.runInContext(`${source}\nmodule.exports = { NAV_ITEMS };`, context);
+
+  const diagnostics = context.module.exports.NAV_ITEMS.find((item) => item.path === '/dashboard/lab');
+  assert.equal(diagnostics?.section, 'Diagnostics');
+  assert.equal(diagnostics?.label, 'Diagnostics workbench');
+
+  const sidebar = fs.readFileSync(path.join(__dirname, '..', '..', 'Awibi-EHR-Frontend', 'src', 'components', 'layout', 'Sidebar.jsx'), 'utf8');
+  assert.match(sidebar, /'Clinical', 'Diagnostics', 'Nursing', 'Pharmacy'/);
+});
+
 /**
  * Catch an identifier that is used but never imported.
  *

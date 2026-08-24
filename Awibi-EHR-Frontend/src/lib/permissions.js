@@ -64,7 +64,10 @@ export const NAV_ITEMS = [
   // key:null means every signed-in role sees it — a nurse checking a dose needs
   // it as much as a consultant does. Marked PRO because it is the flagship.
   { key: null,           label: 'Scout',            icon: 'Compass',         path: '/dashboard/scout',        section: 'Clinical', badge: 'PRO', featured: true },
-  { key: 'lab',          label: 'Diagnostics',      icon: 'FlaskConical',    path: '/dashboard/lab',          section: 'Clinical' },
+  // Diagnostics is an independent operational department, like Pharmacy.
+  // Doctors can still place investigation orders from Clinical, while the
+  // diagnostic team receives, processes and reports them in this workspace.
+  { key: 'lab',          label: 'Diagnostics workbench', icon: 'FlaskConical', path: '/dashboard/lab',         section: 'Diagnostics' },
   { key: 'emergency',    label: 'Emergency intake', icon: 'AlertTriangle',   path: '/dashboard/emergency',    section: 'Patient Access' },
   { key: 'bookings',     label: 'Booking requests', icon: 'CalendarCheck',   path: '/dashboard/bookings',     section: 'Patient Access' },
   { key: 'patients',     label: 'Enquiries',        icon: 'MessageSquare',   path: '/dashboard/inquiries',    section: 'Patient Access' },

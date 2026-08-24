@@ -50,7 +50,7 @@ const ICON_MAP = {
   Hash:               IconHash,
 };
 
-const SECTIONS = ['General', 'Patient Access', 'Clinical', 'Nursing', 'Pharmacy', 'Admin', 'Platform', 'System'];
+const SECTIONS = ['General', 'Patient Access', 'Clinical', 'Diagnostics', 'Nursing', 'Pharmacy', 'Admin', 'Platform', 'System'];
 
 function NavItem({ item, allowed, onClose, collapsed }) {
   const Icon = ICON_MAP[item.icon] || IconHome;
