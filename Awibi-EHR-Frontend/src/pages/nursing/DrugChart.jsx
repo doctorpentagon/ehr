@@ -9,6 +9,7 @@ import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 import { can } from '../../lib/permissions';
 import PatientPicker from '../../components/clinical/PatientPicker';
+import MedicationSafetyPanel from '../../components/clinical/MedicationSafetyPanel';
 
 const ROUTES = ['ORAL', 'IV', 'IM', 'SC', 'TOPICAL', 'RECTAL', 'INHALATION', 'SUBLINGUAL', 'OTHER'];
 const STATUSES = ['GIVEN', 'MISSED', 'REFUSED', 'HELD'];
@@ -151,7 +152,7 @@ function RecordDoseModal({ open, onClose, patientId, prescription }) {
   );
 }
 
-export default function DrugChart() {
+export default function DrugChart({ embedded = false }) {
   const [patientId, setPatientId] = useState('');
   const [modal, setModal] = useState({ open: false, prescription: null });
   const user = useSelector(s => s.auth?.user);
@@ -168,10 +169,12 @@ export default function DrugChart() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold text-gray-900">Drug chart</h1>
-        <p className="text-sm text-gray-500">Medication administration record — oral, IV, IM and more</p>
-      </div>
+      {!embedded && (
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Medication monitoring</h1>
+          <p className="text-sm text-gray-500">Record medicines given to the patient</p>
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-gray-200 p-4">
         <PatientPicker id="dc-patient" value={patientId} onChange={setPatientId} autoFocus />
@@ -179,12 +182,13 @@ export default function DrugChart() {
 
       {!patientId ? (
         <div className="bg-white rounded-xl border border-gray-200">
-          <EmptyState icon={Pill} title="Choose a patient" description="Select a patient to see their prescribed medicines and record administrations." />
+          <EmptyState icon={Pill} title="Choose a patient" description="View prescribed medicines and record each dose given." />
         </div>
       ) : isLoading ? (
         <div className="py-16 flex justify-center"><Spinner size="lg" /></div>
       ) : (
         <>
+          <MedicationSafetyPanel patientId={patientId} />
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
               <span className="font-semibold text-gray-900 text-sm">Prescribed medicines ({prescriptions.length})</span>

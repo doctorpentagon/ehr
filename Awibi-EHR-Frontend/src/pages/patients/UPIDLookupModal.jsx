@@ -64,7 +64,7 @@ export default function UPIDLookupModal({ open, onClose }) {
           />
           {loading && <span className="absolute right-4 top-1/2 -translate-y-1/2"><Spinner size="sm" /></span>}
         </div>
-        <p className="text-xs text-gray-500 mb-4">Phone numbers may be shared by families. Confirm the person using name and date of birth before opening the chart.</p>
+        <p className="text-xs text-gray-500 mb-4">Family members may share a phone number. Confirm the name and date of birth.</p>
 
         {/* Lookup button */}
         <button
@@ -82,7 +82,7 @@ export default function UPIDLookupModal({ open, onClose }) {
             <div className="space-y-3">
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                 <div className="font-semibold">Shared phone number</div>
-                <p className="mt-1 text-xs leading-relaxed">{result.message} Use the name, date of birth, sex and hospital number below. Do not guess.</p>
+                <p className="mt-1 text-xs leading-relaxed">{result.message} Confirm the name, date of birth, sex and hospital number.</p>
               </div>
               {candidates.map((patient) => (
                 <button

@@ -21,10 +21,10 @@ const ENCOUNTER_TYPES = [
 ];
 
 const METHODS = [
-  { key: 'NOTE_TAKER',    label: 'Type SOAP Note', desc: 'Fast typing with a structured template', Icon: FileText, color: 'blue' },
-  { key: 'VOICE',         label: 'Voice Record', desc: 'Speak or upload audio; AI structures SOAP', Icon: Mic, color: 'green' },
-  { key: 'OCR',           label: 'Scan & Extract', desc: 'Snap or upload handwriting; AI extracts', Icon: Camera, color: 'orange' },
-  { key: 'QUESTIONNAIRE', label: 'Questionnaire / Checklist', desc: 'Tap through findings and generate SOAP', Icon: ClipboardList, color: 'purple' },
+  { key: 'NOTE_TAKER',    label: 'Type SOAP note', desc: 'Type directly into the SOAP form', Icon: FileText, color: 'blue' },
+  { key: 'VOICE',         label: 'Voice recording', desc: 'Record or upload audio', Icon: Mic, color: 'green' },
+  { key: 'OCR',           label: 'Photo or scan', desc: 'Take or upload a photo of the note', Icon: Camera, color: 'orange' },
+  { key: 'QUESTIONNAIRE', label: 'Questions', desc: 'Use guided clinical questions', Icon: ClipboardList, color: 'purple' },
 ];
 
 const SOAP_FIELDS = [
@@ -276,9 +276,9 @@ export default function NewEncounter() {
       body.append('patient_id', patientId);
       const { data } = await api.post('/ai/transcribe-soap', body, { headers: { 'Content-Type': 'multipart/form-data' } });
       applyAiSoap(data.soap);
-      toast.success('AI structured the recording. Review every heading before saving.');
+      toast.success('Draft ready. Check each section before saving.');
     } catch (error) {
-      toast.error(error.response?.data?.error || 'AI could not structure this recording');
+      toast.error(error.response?.data?.error || 'Could not prepare a draft from this recording');
     } finally {
       setAiStructuring(false);
     }
@@ -326,7 +326,7 @@ export default function NewEncounter() {
       examination: questionnaireDetails.examination.trim(),
     }));
     setQuestionnaireGenerated(true);
-    toast.success('SOAP draft generated. Complete the assessment and plan, then review every heading.');
+    toast.success('SOAP draft ready. Complete the assessment and plan, then check it.');
   };
 
   const extractScan = async () => {
@@ -340,7 +340,7 @@ export default function NewEncounter() {
       const { data } = await api.post('/ai/ocr-soap', body, { headers: { 'Content-Type': 'multipart/form-data' } });
       applyAiSoap(data.soap);
       setOcrText(JSON.stringify(data.soap || {}));
-      toast.success('AI structured the document. Review every heading before saving.');
+      toast.success('Draft ready. Check each section before saving.');
     } catch (error) {
       toast.error(error.response?.data?.error || 'Could not extract text from this image');
     } finally {
@@ -397,7 +397,7 @@ export default function NewEncounter() {
       toast.success(data.status === 'DRAFT' ? 'SOAP draft saved' : 'Encounter saved');
       navigate(`/dashboard/cases/${data.id}`);
     },
-    onError: err => toast.error(err.response?.data?.error || err.message || 'Failed to save encounter'),
+    onError: err => toast.error(err.response?.data?.error || err.message || 'Could not save the encounter'),
   });
 
   const setF = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
@@ -410,14 +410,14 @@ export default function NewEncounter() {
 
       <div>
         <h1 className="text-xl font-bold text-gray-900">New Encounter</h1>
-        <p className="text-sm text-gray-500 mt-1">Document once, using typing, voice, scan or guided questions together.</p>
+        <p className="text-sm text-gray-500 mt-1">Use typing, voice, a photo or guided questions</p>
       </div>
 
       {!method ? (
         <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6">
           <div className="mb-5">
             <h2 className="text-base font-semibold text-gray-900">How would you like to document?</h2>
-            <p className="mt-1 text-sm text-gray-500">Choose one starting point. Every option finishes in the same clinician-reviewed SOAP record.</p>
+            <p className="mt-1 text-sm text-gray-500">Start with any option. You can use the others later.</p>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {METHODS.map(({ key, label, desc, Icon }, index) => (
@@ -434,9 +434,7 @@ export default function NewEncounter() {
               </button>
             ))}
           </div>
-          <div className="mt-4 rounded-xl bg-gray-50 p-3 text-xs leading-relaxed text-gray-600">
-            Voice and Scan send the selected source to the configured Awibi clinical AI and receive a six-heading SOAP proposal. The source is not retained by this EHR, and the doctor must review before saving.
-          </div>
+          <div className="mt-4 rounded-xl bg-gray-50 p-3 text-xs leading-relaxed text-gray-600">Voice and photo tools prepare a draft. Check it before saving.</div>
         </section>
       ) : (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3">
@@ -568,8 +566,8 @@ export default function NewEncounter() {
 
         {(method === 'VOICE' || method === 'OCR') && captureStage && aiStatus && !aiStatus.configured && (
           <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
-            <div className="font-semibold">Clinical AI setup required</div>
-            <p className="mt-1 text-xs leading-relaxed">The full capture and review screen is ready, but this local backend has no clinical-AI service configured yet. Follow section 12 in MANUAL_SETUP_REQUIRED.txt. Manual SOAP typing remains available.</p>
+            <div className="font-semibold">Voice and photo tools are not set up</div>
+            <p className="mt-1 text-xs leading-relaxed">Type the note for now. An administrator can set up these tools later.</p>
           </div>
         )}
 
@@ -597,7 +595,7 @@ export default function NewEncounter() {
             )}
             <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3 text-left">
               <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Live transcription preview</div>
-              <p className="mt-2 min-h-12 text-sm leading-relaxed text-gray-700">{liveTranscript || (recording ? 'Listening…' : 'Live preview will appear here when supported by this browser. The saved audio is still processed by the Awibi clinical AI.')}</p>
+              <p className="mt-2 min-h-12 text-sm leading-relaxed text-gray-700">{liveTranscript || (recording ? 'Listening…' : 'Live text will show here if your browser supports it.')}</p>
             </div>
             {!recording && !audioBlob && (
               <label className="mt-4 flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50">
@@ -609,11 +607,11 @@ export default function NewEncounter() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Add notes (optional)</label>
               <textarea value={form.chiefComplaint} onChange={setF('chiefComplaint')} rows={2} placeholder="Brief summary of the consultation…" className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2D5BFF]/30 resize-none" />
             </div>
-            <p className="mx-auto mt-4 max-w-lg text-xs leading-relaxed text-gray-500">The audio is sent securely to the configured Awibi clinical AI to propose a SOAP note. The EHR does not retain the source audio after processing; only the clinician-approved structured note is saved.</p>
+            <p className="mx-auto mt-4 max-w-lg text-xs leading-relaxed text-gray-500">The audio is used to prepare a draft and is not saved. Check the draft before saving.</p>
             {audioBlob && (
               <button type="button" disabled={aiStructuring || !patientId || aiStatus?.configured === false} onClick={structureVoice} className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[#2D5BFF] px-5 text-sm font-medium text-white hover:bg-[#1a45e0] disabled:opacity-50">
                 {aiStructuring ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
-                {aiStructuring ? 'AI is structuring your note…' : aiStatus?.configured === false ? 'AI setup required' : 'Structure into SOAP with AI'}
+                {aiStructuring ? 'Preparing draft…' : aiStatus?.configured === false ? 'Tool not set up' : 'Prepare SOAP draft'}
               </button>
             )}
           </div>
@@ -641,11 +639,11 @@ export default function NewEncounter() {
             </div>
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
               <button type="button" disabled={!scanFile || extractingOcr || aiStatus?.configured === false} onClick={extractScan} className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-[#2D5BFF] px-4 text-sm font-medium text-white hover:bg-[#1a45e0] disabled:opacity-50">
-                {extractingOcr ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} {extractingOcr ? 'AI is extracting and structuring…' : aiStatus?.configured === false ? 'AI setup required' : 'Extract into SOAP with AI'}
+                {extractingOcr ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} {extractingOcr ? 'Reading note…' : aiStatus?.configured === false ? 'Tool not set up' : 'Prepare SOAP draft'}
               </button>
               <button type="button" onClick={() => setCaptureStage(false)} className="min-h-11 rounded-lg border border-gray-300 px-4 text-sm font-medium text-gray-700 hover:bg-gray-50">Skip OCR and type manually</button>
             </div>
-            <p className="mt-3 text-xs leading-relaxed text-gray-500">The AI proposal is not a clinical record until the doctor reviews all six headings and saves it. The source file is processed in memory and not retained by this EHR.</p>
+            <p className="mt-3 text-xs leading-relaxed text-gray-500">The photo is used to prepare a draft and is not saved. Check the draft before saving.</p>
           </div>
         )}
 
@@ -804,7 +802,7 @@ function QuestionnaireBuilder({ templateKey, setTemplateKey, answers, details, s
     <div className="space-y-5 rounded-xl border border-purple-200 bg-purple-50/40 p-4 sm:p-5">
       <div>
         <div className="text-sm font-semibold text-gray-900">Questionnaire / Checklist</div>
-        <p className="mt-1 text-xs leading-relaxed text-gray-600">Choose the clerking template, tap Yes or No for relevant findings, and add duration. The system then generates a structured SOAP draft for review.</p>
+        <p className="mt-1 text-xs leading-relaxed text-gray-600">Choose a template, answer the relevant questions and add the duration.</p>
       </div>
       <div>
         <label htmlFor="questionnaire-template" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-gray-600">1. Select template</label>
@@ -855,7 +853,7 @@ function QuestionnaireBuilder({ templateKey, setTemplateKey, answers, details, s
         <label htmlFor="questionnaire-history" className="mb-1 block text-sm font-medium text-gray-700">Additional history</label>
         <textarea id="questionnaire-history" rows={3} value={details.history} onChange={event => setDetails(current => ({ ...current, history: event.target.value }))} placeholder="Onset, progression, previous treatment, relevant past history…" className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
       </div>
-      <button type="button" onClick={onGenerate} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-purple-700 px-4 text-sm font-semibold text-white hover:bg-purple-800"><ClipboardList size={17} /> Generate SOAP Note</button>
+      <button type="button" onClick={onGenerate} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-purple-700 px-4 text-sm font-semibold text-white hover:bg-purple-800"><ClipboardList size={17} /> Prepare SOAP draft</button>
     </div>
   );
 }

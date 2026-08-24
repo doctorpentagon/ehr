@@ -1,13 +1,17 @@
 export const PERMISSIONS = {
   // Must stay in sync with Awibi-EHR-Backend/src/utils/permissions.js —
   // the backend enforces these, this map only renders the sidebar.
-  // ADMIN = facility owner: sees everything in their facility, but does not
-  // author signed clinical content (no clinical_write/prescriptions_write).
+  // ADMIN = facility owner: sees and can initiate every workflow in their own
+  // facility. Actions remain attributed to the logged-in administrator; this
+  // never makes an ADMIN a platform-wide or anonymous actor.
   // Awibi platform operators never inherit a hospital's clinical permissions.
   // The backend tenant middleware enforces the same boundary independently.
   SUPER_ADMIN: { platform:1, settings:1, support:1 },
-  ADMIN:       { overview:1, patients:1, cases:1, appointments:1, lab:1, departments:1, staff:1, affiliates:1, billing:1, subscription:1, reports:1, settings:1, admissions:1, beds:1, orders:1, pharmacy:1, inventory_write:1, support:1, patient_demographics_write:1,
-                 nursing:1, monitoring:1, drug_admin:1, handover:1, growth:1, bookings:1, emergency:1, emergency_write:1, households:1 },
+  ADMIN:       { overview:1, patients:1, cases:1, appointments:1, lab:1, departments:1, staff:1, affiliates:1, billing:1, subscription:1, reports:1, settings:1, admissions:1, beds:1, orders:1, clinical_orders:1, pharmacy:1, support:1, bookings:1, emergency:1, households:1,
+                 patient_demographics_write:1, vitals:1, vitals_write:1, clinical_write:1, prescriptions:1, prescriptions_write:1, medication_safety:1,
+                 diagnostic_order:1, diagnostic_process:1, transfer:1, inventory_write:1, pharmacy_write:1,
+                 nursing:1, monitoring:1, monitoring_write:1, monitoring_review:1, drug_admin:1, drug_admin_write:1,
+                 handover:1, handover_write:1, growth:1, growth_write:1, emergency_write:1 },
   RECORDS:     { overview:1, patients:1, appointments:1, settings:1, support:1, patient_demographics_write:1, bookings:1, emergency:1, emergency_write:1, households:1 },
   CLINICIAN:   { overview:1, settings:1, support:1 },
 };
@@ -20,10 +24,10 @@ const SUB_ROLE_EXTRAS = {
   // Admission and discharge are medical decisions. Doctors had no `admissions`
   // permission, so a patient could be admitted and never discharged by the
   // person who decides they are fit to leave — beds never came free.
-  DOCTOR:     { patients:1, cases:1, appointments:1, lab:1, diagnostic_order:1, reports:1, prescriptions:1, orders:1, vitals_write:1, clinical_write:1, prescriptions_write:1,
+  DOCTOR:     { patients:1, cases:1, appointments:1, lab:1, diagnostic_order:1, reports:1, prescriptions:1, orders:1, clinical_orders:1, vitals_write:1, clinical_write:1, prescriptions_write:1, medication_safety:1,
                 nursing:1, monitoring:1, monitoring_review:1, drug_admin:1, handover:1, growth:1, growth_write:1,
                 emergency:1, emergency_write:1, households:1 },
-  NURSE:      { patients:1, cases:1, appointments:1, lab:1, admissions:1, beds:1, orders:1, vitals:1, vitals_write:1,
+  NURSE:      { patients:1, cases:1, appointments:1, lab:1, admissions:1, beds:1, orders:1, vitals:1, vitals_write:1, medication_safety:1,
                 nursing:1, monitoring:1, monitoring_write:1, drug_admin:1, drug_admin_write:1, handover:1, handover_write:1, growth:1, growth_write:1, emergency:1, emergency_write:1 },
   LAB:        { lab:1, diagnostic_process:1, transfer:1 },
   RADIOLOGIST: { lab:1, diagnostic_process:1, transfer:1 },
@@ -32,7 +36,7 @@ const SUB_ROLE_EXTRAS = {
   CHEMICAL_PATHOLOGIST: { lab:1, diagnostic_process:1, transfer:1 },
   HISTOPATHOLOGIST: { lab:1, diagnostic_process:1, transfer:1 },
   MICROBIOLOGIST: { lab:1, diagnostic_process:1, transfer:1 },
-  PHARMACIST: { patients:1, prescriptions:1, pharmacy:1, pharmacy_write:1, inventory_write:1, billing:1 },
+  PHARMACIST: { patients:1, prescriptions:1, pharmacy:1, pharmacy_write:1, inventory_write:1, billing:1, medication_safety:1 },
 };
 
 export function can(role, subRole, module) {
@@ -54,7 +58,7 @@ export const NAV_ITEMS = [
   { key: 'appointments', label: 'Appointments',     icon: 'Calendar',        path: '/dashboard/appointments', section: 'Patient Access' },
   // "Cases" matches the clinical language used in the designs and on the ward.
   { key: 'cases',        label: 'Cases',            icon: 'FileText',        path: '/dashboard/cases',        section: 'Clinical' },
-  { key: 'prescriptions',label: 'Orders & prescriptions', icon: 'ClipboardPlus', path: '/dashboard/orders',    section: 'Clinical' },
+  { key: 'clinical_orders',label: 'Orders & prescriptions', icon: 'ClipboardPlus', path: '/dashboard/orders', section: 'Clinical' },
   // Sits after Cases: a clinician reaches for a score or a drip rate while
   // they are in the middle of an encounter, not as a separate errand.
   // key:null means every signed-in role sees it — a nurse checking a dose needs
@@ -64,17 +68,17 @@ export const NAV_ITEMS = [
   { key: 'emergency',    label: 'Emergency intake', icon: 'AlertTriangle',   path: '/dashboard/emergency',    section: 'Patient Access' },
   { key: 'bookings',     label: 'Booking requests', icon: 'CalendarCheck',   path: '/dashboard/bookings',     section: 'Patient Access' },
   { key: 'patients',     label: 'Enquiries',        icon: 'MessageSquare',   path: '/dashboard/inquiries',    section: 'Patient Access' },
+  // Admission is the nurse's first ward-arrival task, so keep it at the top of
+  // the Nursing group. The doctor requests it from Clinical; nursing assigns
+  // the bed and records the physical arrival.
+  { key: 'admissions',   label: 'Admissions & beds', icon: 'BedDouble',      path: '/dashboard/admissions',   section: 'Nursing' },
   { key: 'monitoring',   label: 'Monitoring',       icon: 'Activity',        path: '/dashboard/nursing',      section: 'Nursing' },
-  { key: 'drug_admin',   label: 'Drug chart',       icon: 'Pill',            path: '/dashboard/nursing/drug-chart', section: 'Nursing' },
   { key: 'handover',     label: 'Shift report',     icon: 'ClipboardList',   path: '/dashboard/nursing/shift-report',   section: 'Nursing' },
   { key: 'drug_admin',   label: 'Task worklist',    icon: 'ListChecks',      path: '/dashboard/nursing/worklist',   section: 'Nursing' },
   // The worklist answers "what is due now"; standing orders answer "what was
   // instructed and is it actually happening". Different questions, different screens.
   { key: 'orders',       label: 'Standing orders',  icon: 'ClipboardCheck',  path: '/dashboard/nursing/orders',     section: 'Nursing' },
-  // The doctor requests admission; nursing allocates the ward/bed and records
-  // the physical admission. Keeping this here makes that ownership explicit.
-  { key: 'admissions',   label: 'Admissions & beds', icon: 'BedDouble',      path: '/dashboard/admissions',   section: 'Nursing' },
-  { key: 'pharmacy',     label: 'Dispensing & stock', icon: 'Package',       path: '/dashboard/pharmacy',     section: 'Pharmacy' },
+  { key: 'pharmacy',     label: 'Pharmacy workbench', icon: 'Package',       path: '/dashboard/pharmacy',     section: 'Pharmacy' },
   // Every member of staff can message colleagues — a nurse who cannot tell a
   // doctor something is the problem this solves, so there is no gating key.
   { key: null,           label: 'Messages',         icon: 'MessageCircle',   path: '/dashboard/messages',     section: 'Clinical' },

@@ -60,7 +60,7 @@ export default function Register() {
         navigate('/dashboard');
       }
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Registration failed');
+      toast.error(err.response?.data?.error || 'Could not complete registration');
     } finally {
       setLoading(false);
     }

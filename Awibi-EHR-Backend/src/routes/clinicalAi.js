@@ -9,6 +9,7 @@ const { requireTenantPatient } = require('../utils/tenantRecords');
 
 const auth = [authenticate, tenant, requirePermission('clinical_write')];
 const nursingAuth = [authenticate, tenant, requirePermission('monitoring_write')];
+const diagnosticAuth = [authenticate, tenant, requirePermission('diagnostic_process')];
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024, files: 1 },
@@ -16,6 +17,14 @@ const upload = multer({
 
 const AUDIO_TYPES = new Set(['audio/webm', 'audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/wav', 'audio/x-wav', 'audio/ogg']);
 const DOCUMENT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+const DIAGNOSTIC_SCOPE = {
+  RADIOLOGIST: { testType: { in: ['IMAGING', 'ECG'] } },
+  RADIOGRAPHER: { testType: 'IMAGING' },
+  HAEMATOLOGIST: { diagnosticDiscipline: { in: ['Haematology', 'Hematology'] } },
+  CHEMICAL_PATHOLOGIST: { diagnosticDiscipline: { in: ['Chemistry', 'Chemical Pathology'] } },
+  HISTOPATHOLOGIST: { diagnosticDiscipline: { in: ['Histopathology', 'Morbid Anatomy', 'Anatomical Pathology'] } },
+  MICROBIOLOGIST: { diagnosticDiscipline: { in: ['Microbiology', 'Parasitology', 'Serology'] } },
+};
 
 function configured() {
   return Boolean(process.env.AWIBI_CLINICAL_AI_URL);
@@ -123,11 +132,63 @@ async function callNursingAgent(file, fields, fieldDefinitions) {
   return observation;
 }
 
+function normaliseDiagnosticDraft(payload = {}) {
+  const source = payload.report || payload.result || payload.data || payload;
+  const rawValue = source.resultValue ?? source.numericValue ?? source.value;
+  return {
+    resultValue: rawValue === undefined || rawValue === null || rawValue === '' || !Number.isFinite(Number(rawValue)) ? null : Number(rawValue),
+    result: source.resultText ?? source.narrative ?? (typeof source.result === 'string' ? source.result : '') ?? '',
+    findings: source.findings ?? source.reportFindings ?? '',
+    impression: source.impression ?? source.reportImpression ?? '',
+    notes: source.notes ?? source.interpretation ?? '',
+    transcript: source.transcript ?? payload.transcript ?? '',
+    confidence: source.confidence ?? payload.confidence ?? null,
+  };
+}
+
+async function callDiagnosticAgent(file, fields) {
+  if (!configured()) {
+    const error = new Error('Clinical AI is not configured on this server. Set AWIBI_CLINICAL_AI_URL before using diagnostic Voice or Handwriting extraction.');
+    error.statusCode = 503;
+    error.code = 'CLINICAL_AI_NOT_CONFIGURED';
+    throw error;
+  }
+  const form = new FormData();
+  form.append('source_file', new Blob([file.buffer], { type: file.mimetype }), file.originalname);
+  Object.entries(fields).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') form.append(key, String(value));
+  });
+  const base = process.env.AWIBI_CLINICAL_AI_URL.replace(/\/$/, '');
+  const headers = {};
+  if (process.env.AWIBI_CLINICAL_AI_KEY) headers.authorization = `Bearer ${process.env.AWIBI_CLINICAL_AI_KEY}`;
+  const response = await fetch(`${base}/diagnostic-result`, {
+    method: 'POST', headers, body: form, signal: AbortSignal.timeout(30_000),
+  });
+  let body = {};
+  try { body = await response.json(); } catch { /* handled below */ }
+  if (!response.ok) {
+    const error = new Error(body.error || body.message || `Clinical AI returned ${response.status}`);
+    error.statusCode = response.status >= 500 ? 502 : response.status;
+    throw error;
+  }
+  const draft = normaliseDiagnosticDraft(body);
+  if ([draft.result, draft.findings, draft.impression, draft.notes, draft.transcript].every(value => !String(value || '').trim()) && draft.resultValue == null) {
+    const error = new Error('Clinical AI returned an empty diagnostic result proposal');
+    error.statusCode = 502;
+    throw error;
+  }
+  return draft;
+}
+
 router.get('/status', auth, (req, res) => {
   res.json({ configured: configured(), provider: configured() ? 'AWIBI_CLINICAL_AI' : null, storesSourceFiles: false });
 });
 
 router.get('/nursing-status', nursingAuth, (req, res) => {
+  res.json({ configured: configured(), provider: configured() ? 'AWIBI_CLINICAL_AI' : null, storesSourceFiles: false });
+});
+
+router.get('/diagnostic-status', diagnosticAuth, (req, res) => {
   res.json({ configured: configured(), provider: configured() ? 'AWIBI_CLINICAL_AI' : null, storesSourceFiles: false });
 });
 
@@ -203,6 +264,56 @@ router.post('/nursing-observation', nursingAuth, upload.single('source_file'), a
       observationSaved: false,
       taskCompleted: false,
       medicationAdministered: false,
+    });
+  } catch (error) { next(error); }
+});
+
+router.post('/diagnostic-result', diagnosticAuth, upload.single('source_file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'source_file is required' });
+    if (!AUDIO_TYPES.has(req.file.mimetype) && !DOCUMENT_TYPES.has(req.file.mimetype)) {
+      return res.status(400).json({ error: 'Use supported audio, JPG, PNG, WebP, or PDF input' });
+    }
+    const requestId = req.body.request_id || req.body.requestId;
+    if (!requestId) return res.status(400).json({ error: 'request_id is required' });
+    const request = await prisma.labRequest.findFirst({
+      where: { id: requestId, facilityId: req.ctx.facilityId, ...(DIAGNOSTIC_SCOPE[req.ctx.subRole] || {}) },
+      select: {
+        id: true, patientId: true, testName: true, testType: true, diagnosticDiscipline: true,
+        resultUnit: true, referenceLow: true, referenceHigh: true, status: true,
+      },
+    });
+    if (!request) return res.status(404).json({ error: 'Diagnostic request not found in your worklist' });
+    if (request.status === 'CANCELLED') return res.status(409).json({ error: 'A cancelled diagnostic request cannot receive a result draft' });
+
+    const draft = await callDiagnosticAgent(req.file, {
+      request_id: request.id,
+      patient_id: request.patientId,
+      test_name: request.testName,
+      test_type: request.testType,
+      diagnostic_discipline: request.diagnosticDiscipline,
+      result_unit: request.resultUnit,
+      reference_low: request.referenceLow,
+      reference_high: request.referenceHigh,
+      capture_type: AUDIO_TYPES.has(req.file.mimetype) ? 'VOICE' : 'SNAP',
+      report_fields: req.body.report_fields,
+    });
+    prisma.auditLog.create({ data: {
+      facilityId: req.ctx.facilityId,
+      userId: req.ctx.userId,
+      action: 'ai.diagnostic_result.proposed',
+      resource: 'LabRequest',
+      resourceId: request.id,
+      reason: 'Diagnostic-professional-requested draft; source file not retained and result not finalized',
+      ip: req.ip,
+      details: { mimeType: req.file.mimetype, sizeBytes: req.file.size },
+    } }).catch(() => {});
+    res.json({
+      draft,
+      requiresProfessionalReview: true,
+      sourceRetained: false,
+      resultSaved: false,
+      requestCompleted: false,
     });
   } catch (error) { next(error); }
 });

@@ -85,7 +85,7 @@ const authSlice = createSlice({
       })
       .addCase(login.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload?.error || 'Login failed';
+        state.error = action.payload?.error || 'Could not sign in';
       })
       .addCase(demoLogin.pending, (state) => { state.loading = true; state.error = null; })
       .addCase(demoLogin.fulfilled, (state, action) => {
@@ -96,7 +96,7 @@ const authSlice = createSlice({
       })
       .addCase(demoLogin.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload?.error || 'Demo entry failed';
+        state.error = action.payload?.error || 'Could not open the demo';
       })
       // Only block with spinner on cold load (no persisted session).
       // If we already have a user, the dashboard stays visible while we silently re-validate.

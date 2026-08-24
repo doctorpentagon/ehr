@@ -76,7 +76,7 @@ function FacilitySettings() {
   const { mutate, isPending } = useMutation({
     mutationFn: () => api.put('/settings/facility', form),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings-facility'] }); toast.success('Facility profile updated'); },
-    onError: () => toast.error('Failed to update'),
+    onError: () => toast.error('Could not update the facility profile'),
   });
 
   if (isLoading || !form) return <div className="py-8 flex justify-center"><Spinner /></div>;
@@ -122,7 +122,7 @@ function ProfileSettings() {
   const { mutate, isPending } = useMutation({
     mutationFn: () => api.put('/settings/profile', form),
     onSuccess: () => { toast.success('Profile updated'); },
-    onError: () => toast.error('Failed to update profile'),
+    onError: () => toast.error('Could not update your profile'),
   });
 
   return (
@@ -169,7 +169,7 @@ function SecuritySettings({ passwordChangeRequired }) {
       toast.success('Password changed successfully');
       if (passwordChangeRequired) navigate('/dashboard', { replace: true });
     },
-    onError: err => toast.error(err.response?.data?.error || 'Failed to change password'),
+    onError: err => toast.error(err.response?.data?.error || 'Could not change the password'),
   });
 
   const submit = e => {

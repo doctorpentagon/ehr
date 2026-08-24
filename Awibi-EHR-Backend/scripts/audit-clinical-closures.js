@@ -41,7 +41,10 @@ async function main() {
   const catalogue = await request('GET', '/auth/local-demo-accounts');
   check('local clinical fixture is available', catalogue.status === 200 && catalogue.data.accounts?.length > 0);
   const accounts = catalogue.data.accounts;
-  const doctor = accounts.find(item => item.subRole === 'DOCTOR');
+  // The showcase seed deliberately gives the isolation facility its own
+  // clinician accounts. This audit needs the fully populated UCH fixture, so
+  // choose that tenant first and keep every role inside it.
+  const doctor = accounts.find(item => item.subRole === 'DOCTOR' && item.facility?.name === 'UCH Ibadan Demo');
   const facilityId = doctor?.facility?.id;
   const nurse = accounts.find(item => item.subRole === 'NURSE' && item.facility?.id === facilityId);
   const lab = accounts.find(item => item.subRole === 'LAB' && item.facility?.id === facilityId);

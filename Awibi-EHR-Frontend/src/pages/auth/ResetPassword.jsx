@@ -34,7 +34,7 @@ export default function ResetPassword() {
       toast.success('Password reset! Please log in.');
       navigate('/login');
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Reset failed. Link may have expired.');
+      toast.error(err.response?.data?.error || 'Could not reset the password. The link may have expired.');
     } finally {
       setLoading(false);
     }

@@ -140,7 +140,7 @@ export default function Insurance() {
       URL.revokeObjectURL(url);
       toast.success('Export downloaded');
     } catch (e) {
-      toast.error(e?.response?.data?.error || 'Export failed');
+      toast.error(e?.response?.data?.error || 'Could not download the export');
     }
   }
 

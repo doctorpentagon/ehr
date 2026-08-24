@@ -9,6 +9,10 @@ import { search as runSearch } from '@/lib/scoutSearch';
 import { calculate, isComputable, writtenFormula } from '@/lib/scoutCalculator';
 import { loadIndex, loadEntry, downloadForOffline, offlineStatus } from '@/lib/scoutStore';
 
+// The official WHO daily reference adds meaningful data weight. Load it only
+// when somebody opens BMI rather than adding it to every dashboard visit.
+const BmiCalculatorPanel = React.lazy(() => import('./BmiCalculatorPanel'));
+
 /**
  * Awibi Scout — clinical reference and calculators.
  *
@@ -112,6 +116,14 @@ function ResultCard({ result, query, onOpen }) {
 function CalculatorPanel({ entry }) {
   const [values, setValues] = useState({});
   const [outcome, setOutcome] = useState(null);
+
+  if (entry.slug === 'body_mass_index_bmi') {
+    return (
+      <React.Suspense fallback={<div className="border border-gray-200 rounded-lg p-4 text-sm text-gray-500">Loading BMI references…</div>}>
+        <BmiCalculatorPanel />
+      </React.Suspense>
+    );
+  }
 
   const set = (key) => (e) => {
     const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;

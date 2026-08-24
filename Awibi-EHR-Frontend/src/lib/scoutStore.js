@@ -22,6 +22,7 @@ const VERSION_KEY = 'awibi.scout.version';
 
 let memoryIndex = null;
 const memoryEntries = new Map();
+let activeVersion = null;
 
 function readCache(key) {
   try {
@@ -69,6 +70,7 @@ export async function loadIndex({ onProgress } = {}) {
 
   if (cached && cached.version === cachedVersion) {
     onProgress?.({ stage: 'cache' });
+    activeVersion = cached.version;
     memoryIndex = buildIndex(cached);
     // Confirm in the background that this is still the current release. Never
     // block on it — a stale index that works beats a spinner that does not.
@@ -82,6 +84,7 @@ export async function loadIndex({ onProgress } = {}) {
 
   onProgress?.({ stage: 'download' });
   const { data } = await api.get('/scout/index');
+  activeVersion = data.version;
   memoryIndex = buildIndex(data);
 
   evictStaleEntries();
@@ -94,6 +97,7 @@ export async function loadIndex({ onProgress } = {}) {
 /** Force a re-download, e.g. when the manifest reports newer content. */
 export async function refreshIndex() {
   const { data } = await api.get('/scout/index');
+  activeVersion = data.version;
   memoryIndex = buildIndex(data);
   memoryEntries.clear();
   evictStaleEntries();
@@ -107,14 +111,28 @@ export async function loadEntry(slug) {
   if (memoryEntries.has(slug)) return memoryEntries.get(slug);
 
   const cached = readCache(ENTRY_PREFIX + slug);
-  if (cached) {
-    memoryEntries.set(slug, cached);
-    return cached;
+  // Entries used to be stored without a release. A body fetched during an
+  // index refresh could then be written back after eviction, leaving new search
+  // text paired with an old calculator forever. Only use a body whose release
+  // matches the active index; legacy unversioned cache records are ignored.
+  if (cached?.version && cached.version === activeVersion && cached.entry) {
+    memoryEntries.set(slug, cached.entry);
+    return cached.entry;
   }
 
+  const requestedForVersion = activeVersion;
   const { data } = await api.get(`/scout/entry/${slug}`);
+  if (requestedForVersion !== activeVersion) {
+    // The content release changed while this body was in flight. Fetch once
+    // more against the active release rather than reintroducing the stale body
+    // into memory immediately after refreshIndex cleared it.
+    const { data: refreshed } = await api.get(`/scout/entry/${slug}`);
+    memoryEntries.set(slug, refreshed);
+    writeCache(ENTRY_PREFIX + slug, { version: activeVersion, entry: refreshed });
+    return refreshed;
+  }
   memoryEntries.set(slug, data);
-  writeCache(ENTRY_PREFIX + slug, data);
+  writeCache(ENTRY_PREFIX + slug, { version: activeVersion, entry: data });
   return data;
 }
 
@@ -131,7 +149,7 @@ export async function downloadForOffline(onProgress) {
   let stored = 0;
   for (const [slug, entry] of Object.entries(all)) {
     memoryEntries.set(slug, entry);
-    if (writeCache(ENTRY_PREFIX + slug, entry)) stored += 1;
+    if (writeCache(ENTRY_PREFIX + slug, { version: activeVersion, entry })) stored += 1;
   }
   onProgress?.({ stage: 'done', stored, total: Object.keys(all).length });
   return { stored, total: Object.keys(all).length };
@@ -157,5 +175,6 @@ export function clearCache() {
     localStorage.removeItem(VERSION_KEY);
   } catch { /* nothing to clear */ }
   memoryIndex = null;
+  activeVersion = null;
   memoryEntries.clear();
 }

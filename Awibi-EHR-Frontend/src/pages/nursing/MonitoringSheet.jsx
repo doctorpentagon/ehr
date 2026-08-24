@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, AlertTriangle, Check, Printer, LayoutList, Table2, Keyboard, Mic, Camera, ListChecks, Square, Upload, Loader2, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Plus, AlertTriangle, Check, Printer, LayoutList, Table2, BarChart3, Keyboard, Mic, Camera, ListChecks, Square, Upload, Loader2, ShieldCheck, Download, Columns3, Rows3, Search, ClipboardPlus } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { useSelector } from 'react-redux';
@@ -9,6 +9,7 @@ import api from '../../lib/api';
 import Spinner from '../../components/ui/Spinner';
 import ClinicalAttribution from '../../components/clinical/ClinicalAttribution';
 import ClinicalEventTime from '../../components/clinical/ClinicalEventTime';
+import MonitoringChart from '../../components/clinical/MonitoringChart';
 import { can } from '../../lib/permissions';
 
 // Fields flagged mapsTo feed the running intake/output balance.
@@ -24,11 +25,18 @@ function splitBalance(fields, values) {
 }
 
 const CAPTURE_METHODS = [
-  { key: 'TYPE', label: 'Type', description: 'Enter the observation directly', Icon: Keyboard, tone: 'blue' },
-  { key: 'VOICE', label: 'Voice', description: 'Record live or upload saved audio', Icon: Mic, tone: 'green' },
-  { key: 'SNAP', label: 'Snap', description: 'Photograph handwriting or upload a file', Icon: Camera, tone: 'orange' },
-  { key: 'CHECKLIST', label: 'Checklist', description: 'Use the assigned monitoring template', Icon: ListChecks, tone: 'purple' },
+  { key: 'TYPE', label: 'Type', Icon: Keyboard },
+  { key: 'VOICE', label: 'Voice', Icon: Mic },
+  { key: 'SNAP', label: 'Handwriting', Icon: Camera },
+  { key: 'QUESTIONNAIRE', label: 'Questionnaire', Icon: ListChecks },
 ];
+
+function deviationTone(deviation) {
+  const severity = deviation?.severity || '';
+  if (severity.startsWith('CRITICAL')) return 'bg-red-50 font-bold text-red-800';
+  if (severity === 'LOW' || severity === 'HIGH') return 'bg-amber-50 font-semibold text-amber-800';
+  return 'text-gray-700';
+}
 
 export default function MonitoringSheet() {
   const { id } = useParams();
@@ -38,7 +46,12 @@ export default function MonitoringSheet() {
   const [notes, setNotes] = useState('');
   const [abnormal, setAbnormal] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [observationView, setObservationView] = useState('TABLE');
+  const [observationView, setObservationView] = useState('CHART');
+  const [chartFieldKey, setChartFieldKey] = useState('');
+  const [tableSearch, setTableSearch] = useState('');
+  const [abnormalOnly, setAbnormalOnly] = useState(false);
+  const [compactSheet, setCompactSheet] = useState(false);
+  const [hiddenFieldKeys, setHiddenFieldKeys] = useState([]);
   const [criticalNotice, setCriticalNotice] = useState(null);
   const [captureMethod, setCaptureMethod] = useState('TYPE');
   const [captureFile, setCaptureFile] = useState(null);
@@ -103,6 +116,72 @@ export default function MonitoringSheet() {
 
   const fields = sheet.fields || [];
   const totals = sheet.totals || { intakeMl: 0, outputMl: 0, balanceMl: 0 };
+  const numericSeries = fields
+    .filter(field => field.kind === 'number')
+    .map(field => {
+      const points = [...(sheet.entries || [])]
+        .reverse()
+        .filter(entry => entry.values?.[field.key] != null && entry.values[field.key] !== '' && Number.isFinite(Number(entry.values[field.key])))
+        .map(entry => ({
+          at: entry.recordedAt,
+          value: Number(entry.values[field.key]),
+          severity: entry.deviations?.[field.key]?.severity || 'NORMAL',
+          deviation: entry.deviations?.[field.key]?.deviation ?? 0,
+        }));
+      if (!points.length) return null;
+      return {
+        key: field.key,
+        label: field.label,
+        unit: field.unit || null,
+        goalMin: field.goalMin ?? null,
+        goalMax: field.goalMax ?? null,
+        criticalLow: field.criticalLow ?? null,
+        criticalHigh: field.criticalHigh ?? null,
+        points,
+        trend: points.length < 2 ? 'FLAT'
+          : points.at(-1).value > points.at(-2).value ? 'RISING'
+            : points.at(-1).value < points.at(-2).value ? 'FALLING' : 'FLAT',
+        abnormalCount: points.filter(point => point.severity !== 'NORMAL').length,
+      };
+    })
+    .filter(Boolean);
+  const activeSeries = numericSeries.find(series => series.key === chartFieldKey) || numericSeries[0];
+  const visibleFields = fields.filter(field => !hiddenFieldKeys.includes(field.key));
+  const tableEntries = (sheet.entries || []).filter(entry => {
+    if (abnormalOnly && !entry.isAbnormal) return false;
+    if (!tableSearch.trim()) return true;
+    const haystack = [
+      entry.notes,
+      entry.recordedBy?.firstName,
+      entry.recordedBy?.lastName,
+      ...Object.values(entry.values || {}),
+    ].filter(Boolean).join(' ').toLowerCase();
+    return haystack.includes(tableSearch.trim().toLowerCase());
+  });
+  const latestEntry = sheet.entries?.[0] || null;
+  const nextDueAt = latestEntry && sheet.frequencyMins
+    ? new Date(new Date(latestEntry.recordedAt).getTime() + Number(sheet.frequencyMins) * 60_000)
+    : null;
+  const isOverdue = sheet.status === 'ACTIVE' && nextDueAt && nextDueAt.getTime() < Date.now();
+
+  function downloadCsv() {
+    const quote = value => `"${String(value ?? '').replaceAll('"', '""')}"`;
+    const headers = ['Observed at', ...visibleFields.map(field => `${field.label}${field.unit ? ` (${field.unit})` : ''}`), 'Notes', 'Recorded by', 'EHR entry time'];
+    const rows = [...tableEntries].reverse().map(entry => [
+      format(new Date(entry.recordedAt), 'yyyy-MM-dd HH:mm'),
+      ...visibleFields.map(field => entry.values?.[field.key] ?? ''),
+      entry.notes || '',
+      entry.recordedBy ? `${entry.recordedBy.firstName} ${entry.recordedBy.lastName}` : '',
+      format(new Date(entry.createdAt), 'yyyy-MM-dd HH:mm'),
+    ]);
+    const blob = new Blob([[headers, ...rows].map(row => row.map(quote).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${String(sheet.title || 'monitoring').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${format(new Date(), 'yyyyMMdd')}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
 
   function submit() {
     const missing = fields.filter(f => f.required && (values[f.key] === '' || values[f.key] == null));
@@ -194,6 +273,20 @@ export default function MonitoringSheet() {
               </p>
             )}
             {sheet.instructions && <p className="text-sm text-gray-500 mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{sheet.instructions}</p>}
+            {sheet.originatingOrder && (
+              <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950">
+                <div className="flex items-center gap-2 font-bold"><ClipboardPlus size={16} /> Practitioner order</div>
+                <p className="mt-1 font-semibold">{sheet.originatingOrder.name}</p>
+                {sheet.originatingOrder.goal && <p className="mt-1 text-xs"><strong>Goal:</strong> {sheet.originatingOrder.goal}</p>}
+                {sheet.originatingOrder.instructions && <p className="mt-1 text-xs"><strong>Instruction:</strong> {sheet.originatingOrder.instructions}</p>}
+                <p className="mt-2 text-xs text-blue-800">
+                  Ordered {format(new Date(sheet.originatingOrder.createdAt), 'dd MMM yyyy · hh:mm a')}
+                  {sheet.originatingOrder.orderedBy ? ` by ${sheet.originatingOrder.orderedBy.firstName} ${sheet.originatingOrder.orderedBy.lastName}` : ''}
+                  {sheet.originatingOrder.frequencyHours ? ` · every ${sheet.originatingOrder.frequencyHours} hour${Number(sheet.originatingOrder.frequencyHours) === 1 ? '' : 's'}` : ''}
+                  {sheet.originatingOrder.executions?.length ? ` · ${sheet.originatingOrder.executions.length} checks recorded` : ''}
+                </p>
+              </div>
+            )}
           </div>
           {mayWrite && sheet.status === 'ACTIVE' && (
             <div className="flex gap-2 shrink-0">
@@ -212,6 +305,27 @@ export default function MonitoringSheet() {
           <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
             <strong>Monitoring clinically started:</strong> {format(new Date(sheet.startedAt), 'dd MMM yyyy · hh:mm a')}
             {sheet.lateEntryReason && <span className="mt-1 block text-amber-800"><strong>Late entry reason:</strong> {sheet.lateEntryReason}</span>}
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4" aria-label="Monitoring workflow">
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Source</div>
+            <div className="mt-1 text-sm font-semibold text-gray-900">{sheet.orderId ? 'Doctor order' : 'Nurse initiated'}</div>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Chart</div>
+            <div className="mt-1 text-sm font-semibold text-gray-900">{sheet.status}</div>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Latest observation</div>
+            <div className="mt-1 text-sm font-semibold text-gray-900">{latestEntry ? format(new Date(latestEntry.recordedAt), 'dd MMM · HH:mm') : 'Not recorded'}</div>
+          </div>
+          <div className={`rounded-lg border p-3 ${isOverdue ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-gray-50'}`}>
+            <div className={`text-[11px] font-semibold uppercase tracking-wide ${isOverdue ? 'text-red-700' : 'text-gray-500'}`}>{sheet.status === 'COMPLETED' ? 'Status' : 'Next due'}</div>
+            <div className={`mt-1 text-sm font-semibold ${isOverdue ? 'text-red-800' : 'text-gray-900'}`}>
+              {sheet.status === 'COMPLETED' ? 'Completed' : nextDueAt ? `${format(nextDueAt, 'dd MMM · HH:mm')}${isOverdue ? ' · overdue' : ''}` : 'As clinically indicated'}
+            </div>
           </div>
         </div>
 
@@ -242,7 +356,7 @@ export default function MonitoringSheet() {
           <div className="min-w-0 flex-1">
             <div className="text-sm font-bold">Critical observation - immediate escalation required</div>
             <p className="mt-1 text-sm">{criticalNotice.message}</p>
-            <p className="mt-1 text-xs text-red-800">The durable alert is now open. Keep monitoring while the authorised clinician acknowledges and records action.</p>
+            <p className="mt-1 text-xs text-red-800">Critical alert sent. Continue monitoring until a clinician responds.</p>
           </div>
           <button type="button" onClick={() => setCriticalNotice(null)} aria-label="Dismiss critical notice" className="size-10 shrink-0 rounded-lg hover:bg-red-100">×</button>
         </div>
@@ -253,7 +367,7 @@ export default function MonitoringSheet() {
           <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-5 space-y-4">
             <div>
               <h2 className="font-semibold text-gray-900">Record observation</h2>
-              <p className="mt-1 text-xs text-gray-500">Choose how to capture. Every route ends in the same structured, nurse-reviewed observation.</p>
+              <p className="mt-1 text-xs text-gray-500">Enter one or more readings. Check them before saving.</p>
             </div>
             <ClinicalAttribution
               professional={user}
@@ -270,13 +384,11 @@ export default function MonitoringSheet() {
               onReasonChange={setLateEntryReason}
               label="When was this observation taken?"
             />
-            <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-              {CAPTURE_METHODS.map(({ key, label, description, Icon }) => (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {CAPTURE_METHODS.map(({ key, label, Icon }) => (
                 <button key={key} type="button" onClick={() => { setCaptureMethod(key); setCaptureFile(null); setAiDraftReady(false); setAiAbnormalSuggested(false); }}
-                  className={`min-h-[92px] rounded-xl border p-3 text-left transition ${captureMethod === key ? 'border-[#2D5BFF] bg-blue-50 ring-2 ring-[#2D5BFF]/15' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
-                  <Icon size={19} className={captureMethod === key ? 'text-[#2D5BFF]' : 'text-gray-500'} />
-                  <div className="mt-2 text-sm font-semibold text-gray-900">{label}</div>
-                  <div className="mt-0.5 text-[11px] leading-4 text-gray-500">{description}</div>
+                  className={`flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-semibold transition ${captureMethod === key ? 'border-[#2D5BFF] bg-blue-50 text-[#2D5BFF]' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}>
+                  <Icon size={17} /> {label}
                 </button>
               ))}
             </div>
@@ -285,7 +397,7 @@ export default function MonitoringSheet() {
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-3">
                 {aiStatus && !aiStatus.configured && (
                   <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                    Awibi Clinical AI is not configured locally yet. You can still Type or use the Checklist now; Voice and Snap extraction require the service in <span className="font-mono">MANUAL_SETUP_REQUIRED.txt</span>.
+                    Voice and handwriting are not set up yet. Use typing or the form.
                   </div>
                 )}
                 {captureMethod === 'VOICE' ? (
@@ -321,20 +433,20 @@ export default function MonitoringSheet() {
                   {extracting ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
                   {extracting ? 'Extracting draft…' : 'Extract into monitoring fields'}
                 </button>
-                <p className="text-[11px] leading-4 text-gray-500">The source file is not stored by this adapter. AI creates a draft only; it cannot save an observation, complete this sheet, or record medication administration.</p>
+                <p className="text-[11px] leading-4 text-gray-500">The file is used to prepare a draft and is not saved. Check the draft before saving.</p>
               </div>
             )}
 
-            {captureMethod === 'CHECKLIST' && (
+            {captureMethod === 'QUESTIONNAIRE' && (
               <div className="rounded-lg border border-purple-200 bg-purple-50 p-3 text-xs text-purple-900">
-                This checklist comes from the assigned <strong>{sheet.title}</strong> template. Complete the applicable items below; required fields remain enforced.
+                Guided <strong>{sheet.title}</strong> questions are shown below. Complete the applicable measurements; required items remain enforced.
               </div>
             )}
 
             {aiDraftReady && (
               <div role="alert" className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-950">
                 <ShieldCheck size={17} className="mt-0.5 shrink-0 text-[#2D5BFF]" />
-                <span><strong>AI draft ready for nurse review.</strong> Compare every extracted value with the patient/source, correct errors, then explicitly save.{aiAbnormalSuggested ? ' The AI suggested that this may be abnormal; confirm with the displayed values and local escalation policy.' : ''}</span>
+                <span><strong>Draft ready.</strong> Check every value before saving.{aiAbnormalSuggested ? ' One or more values may be abnormal.' : ''}</span>
               </div>
             )}
 
@@ -396,40 +508,107 @@ export default function MonitoringSheet() {
           <div className="font-semibold text-gray-900 text-sm">Observations ({sheet.entries?.length || 0})</div>
           <div className="flex items-center gap-2 print:hidden">
             <div className="inline-flex rounded-lg bg-gray-100 p-1">
+              <button type="button" onClick={() => setObservationView('CHART')} className={`flex min-h-9 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${observationView === 'CHART' ? 'bg-white text-[#2D5BFF] shadow-sm' : 'text-gray-600'}`}><BarChart3 size={14} /> Chart</button>
               <button type="button" onClick={() => setObservationView('TABLE')} className={`flex min-h-9 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${observationView === 'TABLE' ? 'bg-white text-[#2D5BFF] shadow-sm' : 'text-gray-600'}`}><Table2 size={14} /> Sheet</button>
               <button type="button" onClick={() => setObservationView('CARDS')} className={`flex min-h-9 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${observationView === 'CARDS' ? 'bg-white text-[#2D5BFF] shadow-sm' : 'text-gray-600'}`}><LayoutList size={14} /> Cards</button>
             </div>
             <button type="button" onClick={() => window.print()} className="flex min-h-10 items-center gap-1.5 rounded-lg border border-gray-200 px-3 text-xs font-medium text-gray-700 hover:bg-gray-50"><Printer size={14} /> Print</button>
           </div>
         </div>
+        {observationView === 'TABLE' && sheet.entries?.length > 0 && (
+          <div className="space-y-2 border-b border-gray-200 bg-gray-50/70 p-3 print:hidden">
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="relative min-w-48 flex-1">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input value={tableSearch} onChange={event => setTableSearch(event.target.value)} placeholder="Find a value, note or professional…"
+                  className="min-h-10 w-full rounded-lg border border-gray-200 bg-white pl-8 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-[#2D5BFF]/20" />
+              </label>
+              <button type="button" onClick={() => setAbnormalOnly(current => !current)}
+                className={`flex min-h-10 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold ${abnormalOnly ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200 bg-white text-gray-600'}`}>
+                <AlertTriangle size={14} /> Abnormal only
+              </button>
+              <button type="button" onClick={() => setCompactSheet(current => !current)}
+                className={`flex min-h-10 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold ${compactSheet ? 'border-blue-300 bg-blue-50 text-[#2D5BFF]' : 'border-gray-200 bg-white text-gray-600'}`}>
+                <Rows3 size={14} /> Compact rows
+              </button>
+              <details className="relative">
+                <summary className="flex min-h-10 cursor-pointer list-none items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-600">
+                  <Columns3 size={14} /> Columns
+                </summary>
+                <div className="absolute right-0 z-30 mt-1 min-w-56 rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
+                  <div className="mb-2 text-xs font-semibold text-gray-900">Visible measurements</div>
+                  <div className="max-h-56 space-y-2 overflow-y-auto">
+                    {fields.map(field => (
+                      <label key={field.key} className="flex cursor-pointer items-center gap-2 text-xs text-gray-700">
+                        <input type="checkbox" checked={!hiddenFieldKeys.includes(field.key)}
+                          onChange={() => setHiddenFieldKeys(current => current.includes(field.key) ? current.filter(key => key !== field.key) : [...current, field.key])} />
+                        {field.label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </details>
+              <button type="button" onClick={downloadCsv} className="flex min-h-10 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-600">
+                <Download size={14} /> CSV
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-500">Saved entries cannot be edited. Add a correction if needed.</p>
+          </div>
+        )}
         {!sheet.entries?.length ? (
           <div className="py-10 text-center text-sm text-gray-500">No observations recorded yet.</div>
+        ) : observationView === 'CHART' ? (
+          <div className="space-y-3 p-4">
+            {numericSeries.length ? (
+              <>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-900">Value over time</h3>
+                    <p className="text-xs text-gray-500">Green is within range, amber is outside goal, and red is critical.</p>
+                  </div>
+                  <label className="text-xs font-medium text-gray-600">
+                    Measurement
+                    <select
+                      value={activeSeries?.key || ''}
+                      onChange={event => setChartFieldKey(event.target.value)}
+                      className="ml-2 min-h-10 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#2D5BFF]/30"
+                    >
+                      {numericSeries.map(series => <option key={series.key} value={series.key}>{series.label}{series.unit ? ` (${series.unit})` : ''}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <MonitoringChart series={activeSeries} height={300} variant="bar" />
+              </>
+            ) : (
+              <div className="py-10 text-center text-sm text-gray-500">No number-based readings yet. Use Sheet or Cards for text and checklists.</div>
+            )}
+          </div>
         ) : observationView === 'TABLE' ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-xs">
-              <thead className="border-b border-gray-200 bg-gray-50">
+              <thead className="sticky top-0 z-20 border-b border-gray-200 bg-gray-50">
                 <tr>
                   <th className="sticky left-0 z-10 bg-gray-50 px-3 py-3 text-left font-semibold text-gray-600">Observed at</th>
-                  {fields.map(field => <th key={field.key} className="px-3 py-3 text-left font-semibold text-gray-600">{field.label}{field.unit ? ` (${field.unit})` : ''}</th>)}
+                  {visibleFields.map(field => <th key={field.key} className="border-l border-gray-200 px-3 py-3 text-left font-semibold text-gray-600">{field.label}{field.unit ? ` (${field.unit})` : ''}</th>)}
                   <th className="px-3 py-3 text-left font-semibold text-gray-600">Notes</th>
                   <th className="px-3 py-3 text-left font-semibold text-gray-600">Recorded by</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {sheet.entries.map(entry => (
-                  <tr key={entry.id} className={entry.isAbnormal ? 'bg-red-50/60' : 'bg-white'}>
-                    <td className={`sticky left-0 whitespace-nowrap px-3 py-3 font-medium ${entry.isAbnormal ? 'bg-red-50 text-red-900' : 'bg-white text-gray-900'}`}>
+                {tableEntries.map((entry, rowIndex) => (
+                  <tr key={entry.id} className={entry.isAbnormal ? 'bg-red-50/40' : rowIndex % 2 ? 'bg-gray-50/40' : 'bg-white'}>
+                    <td className={`sticky left-0 whitespace-nowrap px-3 font-medium ${compactSheet ? 'py-1.5' : 'py-3'} ${entry.isAbnormal ? 'bg-red-50 text-red-900' : rowIndex % 2 ? 'bg-gray-50 text-gray-900' : 'bg-white text-gray-900'}`}>
                       {format(new Date(entry.recordedAt), 'dd MMM yy · HH:mm')}
                       {entry.lateEntryReason && <span className="mt-1 block text-[10px] font-semibold uppercase text-amber-700">Late entry</span>}
                     </td>
-                    {fields.map(field => {
+                    {visibleFields.map(field => {
                       const value = entry.values?.[field.key];
                       const deviation = entry.deviations?.[field.key];
                       const display = value === 'true' ? 'Yes' : value === 'false' ? 'No' : value;
-                      return <td key={field.key} className={`px-3 py-3 ${deviation ? 'font-bold text-red-800' : 'text-gray-700'}`}>{display === undefined || display === null || display === '' ? '—' : String(display)}{deviation && <span className="ml-1 text-[10px] uppercase">{String(deviation.severity || 'alert').replace(/_/g, ' ')}</span>}</td>;
+                      return <td key={field.key} className={`border-l border-gray-100 px-3 ${compactSheet ? 'py-1.5' : 'py-3'} ${deviationTone(deviation)}`}>{display === undefined || display === null || display === '' ? '—' : String(display)}{deviation && <span className="ml-1 text-[10px] uppercase">{String(deviation.severity || 'alert').replace(/_/g, ' ')}</span>}</td>;
                     })}
-                    <td className="max-w-56 px-3 py-3 text-gray-600">{entry.notes || '—'}</td>
-                    <td className="px-3 py-3 text-gray-600">
+                    <td className={`max-w-56 border-l border-gray-100 px-3 text-gray-600 ${compactSheet ? 'py-1.5' : 'py-3'}`}>{entry.notes || '—'}</td>
+                    <td className={`border-l border-gray-100 px-3 text-gray-600 ${compactSheet ? 'py-1.5' : 'py-3'}`}>
                       <span className="whitespace-nowrap">{entry.recordedBy ? `${entry.recordedBy.firstName} ${entry.recordedBy.lastName}` : 'Not captured'}</span>
                       <span className="mt-1 block whitespace-nowrap text-[10px] text-gray-400">EHR: {format(new Date(entry.createdAt), 'dd MMM yy · HH:mm')}</span>
                       {entry.lateEntryReason && <span className="mt-1 block max-w-48 text-[10px] text-amber-800">Reason: {entry.lateEntryReason}</span>}
@@ -438,6 +617,7 @@ export default function MonitoringSheet() {
                 ))}
               </tbody>
             </table>
+            {tableEntries.length === 0 && <div className="py-8 text-center text-sm text-gray-500">No rows match these sheet filters.</div>}
           </div>
         ) : (
           <div className="divide-y divide-gray-100">

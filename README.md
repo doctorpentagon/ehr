@@ -63,7 +63,7 @@ Identity Frontend (5178) → Identity Backend (8001)
 
 ## Prerequisites
 
-- Node.js ≥ 18 · npm ≥ 9
+- Node.js ≥ 20 · npm ≥ 9
 - PostgreSQL 14+ for each backend; never share one production database/account between EHR and Identity
 - Google Cloud Console account (for Google OAuth)
 - Gmail account with App Password enabled
@@ -165,7 +165,12 @@ seed output, and the login UI.
 Use `Awibi-EHR-Backend/.env.local` for local credentials. Never commit or share
 that file.
 
-Facility: **UCH Ibadan Demo** · Plan: **SMALL** · 10 patients seeded
+Facility: **UCH Ibadan Demo** · Plan: **SMALL** · 11 patients seeded
+
+For repeated cross-module QA, use the permanent synthetic record **Awibi Test Patient**:
+Health ID `AWB-TEST2PAT`, hospital number `DEMO-TEST-001`. The demo seed upserts this
+record without changing either identifier, including when an existing local database is reused.
+Never use this fixture for real care.
 
 A second facility, **Awibi Isolation Test Facility**, is seeded with one
 administrator and no clinical records. It exists so tenant isolation can be
@@ -251,7 +256,7 @@ alongside it.
 | Role | subRole | Module Access |
 |------|---------|---------------|
 | `SUPER_ADMIN` | — | Awibi platform operations only; refused from facility clinical routes |
-| `ADMIN` | — | Facility visibility/configuration, inventory and operations; cannot sign clinical notes or prescribe |
+| `ADMIN` | — | Full visibility and initiation authority inside their own facility; every action remains attributed to that administrator |
 | `RECORDS` | — | Registration, patient records, appointments, bookings, enquiries, emergency intake and households |
 | `CLINICIAN` | `DOCTOR` | Consultations, orders/prescriptions, diagnostics ordering/review and nursing-record review; no bed-board operation |
 | `CLINICIAN` | `NURSE` | Nursing monitoring, drug chart, worklist, handover, admissions and bed allocation |
@@ -527,6 +532,21 @@ A missing height, a 900 kg weight, a zero denominator: each is refused with a
 plain reason. **A number on screen is taken as correct, so being absent beats
 being wrong.**
 
+The BMI calculator accepts height in **centimetres**. It has two deliberately
+separate paths: adult BMI bands, and a child/adolescent assessment using sex,
+date of birth and measurement date. The paediatric path bundles the official
+WHO 2006 daily BMI-for-age LMS reference through day 1,856 and the WHO 2007
+monthly reference from 61–228 months. It applies WHO's restricted LMS tail
+method beyond ±3 SD and shows BMI, z-score, percentile boundary/value and the
+age-appropriate interpretation. Under-five and 5–19 cut-offs are not silently
+mixed. The result is labelled as screening, requires measurement confirmation
+and growth-trend review, and does not tell anyone to place a young child on a
+restrictive diet.
+
+WHO sources: [BMI-for-age birth to 5 years](https://www.who.int/toolkits/child-growth-standards/standards/body-mass-index-for-age-bmi-for-age),
+[BMI-for-age 5 to 19 years](https://www.who.int/tools/growth-reference-data-for-5to19-years/indicators/bmi-for-age),
+and [the LMS computation method](https://cdn.who.int/media/docs/default-source/child-growth/growth-reference-5-19-years/computation.pdf).
+
 Six entries whose formulas branch on sex or step through weight bands are shown
 as written formulas rather than as a Calculate button that could never produce
 an answer.
@@ -564,6 +584,8 @@ against that on the server.
 | `VITALS` | BP, pulse, respiratory rate, temperature, **SpO2**, oxygen support, pain |
 | `BGL_INSULIN` | Blood glucose, insulin given, hypoglycaemia treatment, ketones |
 | `IV_FLUID` | Fluid, rate ordered vs actual, volume infused, derived volume remaining |
+| `ELECTROLYTE_CORRECTION` | Electrolyte, prescribed replacement, infusion volume/rate, repeat result, ECG and symptoms |
+| `PRESSURE_AREA_REPOSITIONING` | Timed position changes, pressure-area/skin checks, relief used, assistance, pain and concerns |
 | `INTAKE_OUTPUT` | Oral and IV intake against urine and other output |
 | `URINARY_CATHETER`, `NGT_FEEDING`, `SURGICAL_DRAIN`, `BLOOD_TRANSFUSION`, `WOUND_CARE`, `NEURO_OBSERVATION`, `SEIZURE_WATCH`, `CUSTOM` | As named |
 
@@ -580,6 +602,44 @@ above 25%.
 bedside and saw something, and blurring that helps nobody in an incident review. Doctors hold
 `monitoring_review` instead: acknowledge, request a recheck, or request a change to the plan.
 The nurse sees it on their worklist and closes it with what was done.
+
+Monitoring has two explicit initiation paths. A doctor selects the patient once in
+**Clinical → Orders & prescriptions → Nursing care / monitoring**; the linked request appears
+on the nurse's Monitoring screen with **Open chart**. Nursing may also use **Start monitoring**
+at the bedside, select the patient ID and define the chart when immediate monitoring is clinically
+necessary before a separate order is available. Either path ends in the same attributed sheet.
+
+Each numeric measurement can be reviewed as a value-over-time bar chart with its patient-specific
+goal/reference band and critical thresholds. The same server-calculated severity colours the chart,
+sheet and alerts. Custom charts can define numeric fields for HbA1c or any locally required measure;
+routine HbA1c results should still originate in Diagnostics rather than be retyped by nursing. Doctors
+and nurses can search by Health ID, hospital number, phone or name, then open **View patient trends**;
+doctors retain review access without being allowed to author a nurse's bedside observation.
+Nursing observation entry uses one compact four-way switcher: Type, Voice, Handwriting and
+Questionnaire. A single capture may populate several fields on the assigned chart, but Voice/
+Handwriting output remains an uncommitted draft until the named nurse verifies and saves it.
+
+Nursing navigation exposes one **Monitoring** workspace with two tabs. **Observation charts**
+contains ordered and nurse-initiated charts; **Medication monitoring** contains the complete
+prescription-linked drug chart, due/overdue dose rounds, omissions and administration history.
+The former `/dashboard/nursing/drug-chart` address remains available for old bookmarks, but is no
+longer a competing sidebar destination.
+
+The clinical sheet view is intentionally spreadsheet-like without becoming a general-purpose
+spreadsheet: sticky headings, compact/comfortable rows, controlled column visibility, value/note/
+professional search, abnormal-only review and CSV export. Each row retains observed time, EHR entry
+time and the recording professional. Saved observations are never edited in place; a correction is
+an attributed append-only entry. This preserves clinical provenance while still giving nurses the
+familiar feel of charting a ward sheet.
+
+Every built-in and custom monitoring type follows the same closed loop: doctor order or justified
+nurse initiation → patient-linked open sheet → due bedside observations → server-calculated
+deviation/critical alert → doctor trend/review access → nursing recheck or plan-response closure →
+completion with history retained. Doctors review patient progress, observation attribution and plan
+adherence; the system does not turn clinical observations into an opaque staff-performance score.
+
+Production infrastructure, security, realtime, database, FHIR/openEHR and temporary AI-model
+decisions are recorded in **[PRODUCTION_ARCHITECTURE_DECISIONS_2026-08-23.md](PRODUCTION_ARCHITECTURE_DECISIONS_2026-08-23.md)**.
 
 ### Standing orders
 
@@ -602,15 +662,101 @@ discipline-scoped Diagnostics worklist; admission requests enter Nursing's Admis
 screen. The receiving team completes the operational step, so a doctor never has to operate a
 bed board and a nurse never has to copy a doctor's instruction out of a consultation note.
 
+### Diagnostics: five service lines, safe walk-in identity, and specialty workflows
+
+The concise click-by-click application reference is maintained separately in
+**[DIAGNOSTICS_WORKFLOW_REFERENCE.md](DIAGNOSTICS_WORKFLOW_REFERENCE.md)**. The workbench itself
+shows actions, status and the active request's operational checklist; it does not carry a long
+"how diagnostics works" essay above the worklist.
+
+Diagnostics is one workbench with five intentional service lines: **Imaging & Radiology**
+(including ECG), **Haematology**, **Chemical Pathology**, **Microbiology** (including
+parasitology/serology), and **Histopathology & Morbid Anatomy**. “General diagnostics” is the
+shared reception/worklist and is not treated as a sixth specialty. Named specialists are
+server-scoped to their own discipline; the general diagnostics demo can route across all five.
+
+There are two distinct clinical origins and three supported identity situations:
+
+1. A doctor places a `CLINICIAN_ORDER` from Clinical → Orders & prescriptions or an encounter.
+2. Diagnostics uses **Register referral / walk-in** for a paper/external referral or a direct
+   diagnostic attendance. The operator can resolve an existing patient through Health ID,
+   hospital number, phone or name, or enter minimum safe demographics for a person with no
+   Awibi/facility record. An unregistered person receives a provisional local Patient ID and
+   hospital number so specimens, images and results are never orphaned. This is explicitly
+   `UNLINKED` to Awibi Identity and marked `PROVISIONAL_DIAGNOSTIC` until Records checks for
+   duplicates and completes/reconciles registration. One intake can tick several approved
+   catalogue investigations across the five service lines; each becomes its own accountable
+   worklist request. The record is labelled `EXTERNAL_REFERRAL` or `DIAGNOSTIC_WALK_IN`; it
+   never pretends the diagnostic professional authored a doctor's order.
+
+The clinician **Order investigation** modal uses these five clinical areas rather than exposing
+the storage enums `LAB`, `IMAGING`, `ECG` and `OTHER` as though they were a complete medical
+classification. It supports catalogue search and up to 20 selected investigations in one action,
+including LFT, named viral markers and Seminal Fluid Analysis (SFA). LFT, viral-marker and SFA
+selection opens relevant detail prompts; every order also retains the clinical question, requested
+components, preparation/timing and specimen/source context. An uncommon investigation can use
+**Custom / not yet in catalogue** with an exact name, one of the five service lines, specimen/body
+site and requested method/components, so it still reaches the correct specialty worklist.
+
+All routes share one audited request/result lifecycle, but operational milestones are deliberately
+specialty-specific and persist who completed each step and when. Steps cannot be checked out of
+sequence:
+
+- **Imaging & Radiology:** safety/protocol → radiographer/sonographer acquisition and QC →
+  PACS/archive accession and retrievable study link → radiologist findings/impression → verified
+  communication/release. The EHR links to PACS/VNA rather than pretending ordinary EHR file
+  storage is a production image archive.
+- **Haematology:** collection/bedside label → accession and specimen quality → analyser/morphology
+  review → validation → critical communication and release.
+- **Chemical Pathology:** preparation/collection → accession/centrifugation and interference check
+  → calibration/QC-backed analysis → units/reference/delta validation → release.
+- **Microbiology:** source/transport → accession and primary microscopy → culture/identification →
+  susceptibility/resistance review → infection-control/critical alert and preliminary/final release.
+- **Histopathology & Morbid Anatomy:** identity/consent → accession/chain of custody → grossing and
+  fixation → processing/block/slide/stain tracking → microscopy/ancillary studies → structured
+  diagnosis/grading/staging → pathologist sign-out and archive.
+
+Catalogue ranges drive abnormal and critical flags. A critical result remains open until a named
+clinical professional acknowledges, records action and resolves the episode. A final report can
+only enter Awibi Identity under an active patient link and consent. Production PACS/VNA/DICOM,
+modality worklist, analyser/barcode interfaces and diagnostic-device validation remain explicit
+manual integration gates rather than simulated integrations.
+
+Result entry has the same compact input-layer principle: Type, Voice, Handwriting and a
+discipline-specific Report guide all feed the existing numeric/narrative/findings/impression form.
+Voice and Handwriting call the configured Clinical AI adapter and can only produce a reviewable
+draft; they cannot finalize, mark the doctor's request complete, or send anything to the patient.
+The diagnostic professional's final submission updates the original request and the linked Health
+ID record; preliminary submission deliberately keeps it open for final reporting.
+
 ### Pharmacy
 
 The pharmacy workbench has a patient-linked prescription queue, auditable partial/full dispense
 events, pharmacist attribution, quantity/unit/amount capture, atomic stock decrement, current
 stock and reorder levels, nearest-expiry visibility, and an additional note requirement for
-controlled medicines. The local demo includes a dedicated pharmacist account. This is a beta
-dispensing core, not an enterprise procurement system: batch/lot/FEFO, purchase orders, goods
-receipt, supplier returns, recalls/quarantine, dual-sign controlled-drug registers, branch
-transfers and full payer reconciliation remain production gates.
+controlled medicines. The local demo includes the dedicated pharmacist **Amina Yusuf**.
+
+The separate **Patient care** tab resolves one patient by Health ID/Hosp No/phone/name and joins
+their current and previous prescriptions, every dispense event, allergies, active conditions,
+Drug Therapy Problems and pharmaceutical care plans. Pharmacists can classify an actual or
+potential DTP, link it to one medicine or the whole regimen, grade severity, document evidence
+and recommendation, and close it only with an explicit outcome. A pharmacist chooses either
+**SOAP** or **CORE–PRIME–FARM** for an attributed care plan. CORE captures condition, desired
+outcomes, regimen and evaluation; PRIME captures pharmaceutical need, risk, interaction,
+mismatch and efficacy problems; FARM captures findings, assessment, resolution/prevention and
+monitoring/follow-up. Both formats share identified needs, measurable goals, interventions,
+adherence and follow-up. Server time and professional are automatic, and only the author can
+sign. Doctors cannot author pharmacy documentation. Doctors see the medication-safety panel
+while prescribing, nurses see it on the medication administration chart, and pharmacists see it
+in Patient care; the facility administrator retains audited within-facility oversight.
+
+Local screening detects exact duplicate active therapy, possible direct recorded-allergy name
+matches and pharmacist-recorded interaction problems. It deliberately reports itself as partial:
+it is **not** an exhaustive interaction checker and never displays a false “all clear”. A licensed,
+clinically governed drug-interaction/allergy/dose knowledge source is still a production safety
+gate. The module is also not yet an enterprise procurement system: batch/lot/FEFO, purchase
+orders, goods receipt, supplier returns, recalls/quarantine, dual-sign controlled-drug registers,
+branch transfers and full payer reconciliation remain production gates.
 
 ### Resuscitation
 
@@ -645,6 +791,23 @@ vanished with nothing to show it had arrived. Keyword routing suggests a departm
 anything that could be an emergency — routing only, never a diagnosis, and the urgent reply
 tells the person to go rather than wait.
 
+### Public appointment booking
+
+Patients do not need an EHR staff account. Each facility can publish its stable public address,
+for example `/clinic/uch-ibadan-demo`, as a website button, WhatsApp link, SMS link or QR code.
+The patient selects a listed doctor and genuinely available time, identifies as new or returning,
+and submits contact details and the reason for the visit.
+
+The submission deliberately enters **Booking requests**, not the doctor's diary. Records/reception
+reviews it, can reschedule it, and either confirms or rejects it with a reason. Confirmation creates
+a `CONFIRMED` appointment for the selected doctor and, for a new person, a clearly marked provisional
+patient record that reception completes on arrival. Doctors default to **My schedule**, where the
+confirmed booking appears. This gate prevents an anonymous visitor from directly creating records,
+blocking a clinician's calendar or injecting unchecked text into the clinical chart.
+
+The patient-facing Awibi Identity portal is still a separate future integration. Public clinic
+booking already works without it; Identity will later provide a signed-in, cross-facility experience.
+
 ### Internal messaging
 
 Plain staff-to-staff messaging scoped to one facility, able to reference a patient. It exists
@@ -666,9 +829,9 @@ See **[NOT_BUILT.md](NOT_BUILT.md)** for the full checkable list. Summary:
 
 - Advanced pharmacy procurement, batch/lot/FEFO, recall/quarantine, witnessed controlled-drug and branch-transfer controls are not built
 - Facility equipment/instrument asset register is not built
-- Patient self-booking from Identity Portal
+- Signed-in cross-facility booking from the Awibi Identity Portal (facility public booking already exists)
 - Playwright / Cypress end-to-end tests — the browser layer is the one substantial untested surface
-- WHO growth reference tables — Z-scores return `null` rather than a wrong number
+- WHO weight-for-age, height-for-age and weight-for-height tables remain unbundled; BMI-for-age is now complete from birth through 19 years
 - Per-facility timezone (process is pinned to `Africa/Lagos`; correct for Nigeria only)
 - Voice capture (placeholder only), AI triage beyond keyword mapping
 - Multilingual / i18n support (deliberate skip — no business requirement)
@@ -679,7 +842,7 @@ See **[NOT_BUILT.md](NOT_BUILT.md)** for the full checkable list. Summary:
 ## Testing
 
 ```bash
-npm run test:unit      # 38 checks — pure logic, no server needed
+npm run test:unit      # 42 checks — pure logic, no server needed
 npm run test:contract  # 183 distinct frontend calls resolve across 253 backend routes
 npm run test:smoke     # 364 checks — every endpoint, every role, against a live API
 npm run test:loops     # 60 checks — each workflow from initiation to completion

@@ -6,7 +6,10 @@ const { tenant } = require('../middleware/tenant');
 const { requirePermission } = require('../middleware/rbac');
 const { requireTenantPatient, requireTenantCase } = require('../utils/tenantRecords');
 const { TRANSITIONS, canTransition, transitionError, interpretResult } = require('../utils/diagnostics');
+const { listWorkflows, normalizeDiscipline, workflowFor, validateWorkflowPrefix } = require('../utils/diagnosticWorkflows');
 const { can } = require('../utils/permissions');
+const { ensureUniqueUPID } = require('../utils/upid');
+const { allocateMrn, normalisePhone, validateDateOfBirth } = require('../utils/patientValidation');
 
 const auth = [authenticate, tenant, requirePermission('lab')];
 const orderAuth = [authenticate, tenant, requirePermission('diagnostic_order')];
@@ -25,8 +28,57 @@ const DISCIPLINE_SCOPE = {
   MICROBIOLOGIST: { diagnosticDiscipline: { in: ['Microbiology', 'Parasitology', 'Serology'] } },
 };
 
-function scopedQueueWhere(req, base = {}) {
-  return { ...base, ...(DISCIPLINE_SCOPE[req.ctx?.subRole] || {}) };
+const QUEUE_DISCIPLINES = {
+  IMAGING: { testType: { in: ['IMAGING', 'ECG'] } },
+  HAEMATOLOGY: { diagnosticDiscipline: { in: ['Haematology', 'Hematology'] } },
+  CHEMICAL_PATHOLOGY: { diagnosticDiscipline: { in: ['Chemistry', 'Chemical Pathology'] } },
+  MICROBIOLOGY: { diagnosticDiscipline: { in: ['Microbiology', 'Parasitology', 'Serology'] } },
+  HISTOPATHOLOGY: { diagnosticDiscipline: { in: ['Histopathology', 'Morbid Anatomy', 'Anatomical Pathology'] } },
+};
+
+const CATALOGUE_DISCIPLINE_SCOPE = {
+  RADIOLOGIST: { testType: { in: ['IMAGING', 'ECG'] } },
+  RADIOGRAPHER: { testType: 'IMAGING' },
+  HAEMATOLOGIST: { category: { in: ['Haematology', 'Hematology'] } },
+  CHEMICAL_PATHOLOGIST: { category: { in: ['Chemistry', 'Chemical Pathology'] } },
+  HISTOPATHOLOGIST: { category: { in: ['Histopathology', 'Morbid Anatomy', 'Anatomical Pathology'] } },
+  MICROBIOLOGIST: { category: { in: ['Microbiology', 'Parasitology', 'Serology'] } },
+};
+
+const CATALOGUE_DISCIPLINES = {
+  IMAGING: { testType: { in: ['IMAGING', 'ECG'] } },
+  HAEMATOLOGY: { category: { in: ['Haematology', 'Hematology'] } },
+  CHEMICAL_PATHOLOGY: { category: { in: ['Chemistry', 'Chemical Pathology'] } },
+  MICROBIOLOGY: { category: { in: ['Microbiology', 'Parasitology', 'Serology'] } },
+  HISTOPATHOLOGY: { category: { in: ['Histopathology', 'Morbid Anatomy', 'Anatomical Pathology'] } },
+};
+
+const DISCIPLINE_LABELS = {
+  IMAGING: 'Radiology',
+  HAEMATOLOGY: 'Haematology',
+  CHEMICAL_PATHOLOGY: 'Chemical Pathology',
+  MICROBIOLOGY: 'Microbiology',
+  HISTOPATHOLOGY: 'Histopathology',
+};
+
+function intersectWhere(...parts) {
+  const filters = parts.filter((part) => part && Object.keys(part).length);
+  if (filters.length === 0) return {};
+  if (filters.length === 1) return filters[0];
+  return { AND: filters };
+}
+
+function requestedDisciplineScope(discipline, scopes = QUEUE_DISCIPLINES) {
+  if (!discipline || discipline === 'ALL') return null;
+  return scopes[String(discipline).toUpperCase()] || undefined;
+}
+
+function scopedQueueWhere(req, base = {}, discipline) {
+  return intersectWhere(
+    base,
+    DISCIPLINE_SCOPE[req.ctx?.subRole],
+    requestedDisciplineScope(discipline),
+  );
 }
 
 const IDENTITY_URL = process.env.IDENTITY_BACKEND_URL || 'http://localhost:8001';
@@ -34,8 +86,11 @@ const SHARED_SECRET = process.env.AWIBI_SHARED_SECRET;
 
 router.get('/', auth, async (req, res, next) => {
   try {
-    const { status, patientId, testType, search, page = 1, limit = 20 } = req.query;
-    let where = scopedQueueWhere(req, { facilityId: req.ctx.facilityId });
+    const { status, patientId, testType, discipline, search, page = 1, limit = 20 } = req.query;
+    if (discipline && discipline !== 'ALL' && !requestedDisciplineScope(discipline)) {
+      return res.status(400).json({ error: 'Unknown diagnostic discipline' });
+    }
+    let where = scopedQueueWhere(req, { facilityId: req.ctx.facilityId }, discipline);
     // Treat an explicit "ALL" as no filter; matching it against the enum
     // literally makes the list silently return nothing.
     if (status && status !== 'ALL') where.status = status;
@@ -72,11 +127,15 @@ router.get('/', auth, async (req, res, next) => {
 router.get('/stats', auth, async (req, res, next) => {
   try {
     const fid = req.ctx.facilityId;
-    const queue = (status) => scopedQueueWhere(req, { facilityId: fid, status });
+    const { discipline } = req.query;
+    if (discipline && discipline !== 'ALL' && !requestedDisciplineScope(discipline)) {
+      return res.status(400).json({ error: 'Unknown diagnostic discipline' });
+    }
+    const queue = (status) => scopedQueueWhere(req, { facilityId: fid, status }, discipline);
     const [pending, inProgress, completed, cancelled] = await prisma.$transaction([
       prisma.labRequest.count({ where: queue('PENDING') }),
       prisma.labRequest.count({ where: queue('IN_PROGRESS') }),
-      prisma.labRequest.count({ where: scopedQueueWhere(req, { facilityId: fid, status: { in: ['PRELIMINARY', 'COMPLETED', 'CORRECTED'] } }) }),
+      prisma.labRequest.count({ where: scopedQueueWhere(req, { facilityId: fid, status: { in: ['PRELIMINARY', 'COMPLETED', 'CORRECTED'] } }, discipline) }),
       prisma.labRequest.count({ where: queue('CANCELLED') }),
     ]);
     res.json({ pending, inProgress, completed, cancelled, total: pending + inProgress + completed + cancelled });
@@ -87,12 +146,159 @@ router.get('/stats', auth, async (req, res, next) => {
 // Declared before '/:id' so "catalogue" is never parsed as a record id.
 router.get('/catalogue', auth, async (req, res, next) => {
   try {
-    const { testType, search } = req.query;
-    const where = { facilityId: req.ctx.facilityId, isActive: true };
+    const { testType, discipline, search } = req.query;
+    const disciplineScope = requestedDisciplineScope(discipline, CATALOGUE_DISCIPLINES);
+    if (discipline && discipline !== 'ALL' && !disciplineScope) {
+      return res.status(400).json({ error: 'Unknown diagnostic discipline' });
+    }
+    const where = intersectWhere(
+      { facilityId: req.ctx.facilityId, isActive: true },
+      CATALOGUE_DISCIPLINE_SCOPE[req.ctx?.subRole],
+      disciplineScope,
+    );
     if (testType) where.testType = testType;
     if (search) where.name = { contains: search, mode: 'insensitive' };
     const tests = await prisma.diagnosticTest.findMany({ where, orderBy: [{ testType: 'asc' }, { name: 'asc' }] });
     res.json({ tests, total: tests.length });
+  } catch (e) { next(e); }
+});
+
+// The UI consumes the same specialty workflow definitions that the write
+// endpoint validates, preventing an attractive checklist from drifting away
+// from the lifecycle the server actually records.
+router.get('/workflows', auth, (req, res) => {
+  res.json({ workflows: listWorkflows() });
+});
+
+// A diagnostic professional can receive a walk-in service request or external
+// referral for either an existing facility patient or a new unregistered
+// person. A new person receives a constrained provisional local record so the
+// specimen/image/result is never orphaned and can later be reconciled by
+// Records or linked to Awibi Identity. This remains distinct from a clinician's
+// order through requestOrigin, and only approved catalogue services are used.
+router.post('/referrals', processAuth, async (req, res, next) => {
+  try {
+    const {
+      patientId, walkInPatient, catalogueTestId, catalogueTestIds, priority, notes,
+      intakeType = 'EXTERNAL_REFERRAL', externalReferrerName, externalReference,
+    } = req.body || {};
+    if (!patientId && !walkInPatient) {
+      return res.status(400).json({ error: 'Select an existing patient or enter the new walk-in details' });
+    }
+    const selectedIds = [...new Set((Array.isArray(catalogueTestIds) && catalogueTestIds.length
+      ? catalogueTestIds
+      : [catalogueTestId]).filter(Boolean))];
+    if (!selectedIds.length) return res.status(400).json({ error: 'Select at least one approved investigation' });
+    if (selectedIds.length > 20) return res.status(400).json({ error: 'A diagnostic intake can contain at most 20 investigations' });
+    if (!['EXTERNAL_REFERRAL', 'WALK_IN'].includes(intakeType)) {
+      return res.status(400).json({ error: 'intakeType must be EXTERNAL_REFERRAL or WALK_IN' });
+    }
+    if (intakeType === 'EXTERNAL_REFERRAL' && !String(externalReferrerName || '').trim()) {
+      return res.status(400).json({ error: 'External referrer or facility name is required' });
+    }
+
+    let patient = patientId ? await requireTenantPatient(req.ctx.facilityId, patientId) : null;
+    let provisionalInput = null;
+    if (!patient) {
+      const firstName = String(walkInPatient?.firstName || '').trim();
+      const lastName = String(walkInPatient?.lastName || '').trim();
+      const gender = String(walkInPatient?.gender || '').toUpperCase();
+      if (!firstName || !lastName) return res.status(400).json({ error: 'First name and last name are required for a new walk-in' });
+      if (!['MALE', 'FEMALE', 'OTHER'].includes(gender)) return res.status(400).json({ error: 'Select the walk-in patient gender' });
+      const dob = validateDateOfBirth(walkInPatient?.dateOfBirth);
+      if (!dob.ok) return res.status(400).json({ error: dob.error });
+      if (!dob.value) return res.status(400).json({ error: 'Date of birth is required for safe diagnostic reference ranges' });
+      const phone = normalisePhone(walkInPatient?.phone);
+      if (!phone.ok) return res.status(400).json({ error: phone.error });
+      provisionalInput = { firstName, lastName, gender, dateOfBirth: dob.value, phone: phone.value };
+    }
+
+    const catalogueWhere = intersectWhere(
+      { id: { in: selectedIds }, facilityId: req.ctx.facilityId, isActive: true },
+      CATALOGUE_DISCIPLINE_SCOPE[req.ctx?.subRole],
+    );
+    const catalogue = await prisma.diagnosticTest.findMany({ where: catalogueWhere });
+    if (catalogue.length !== selectedIds.length) {
+      return res.status(404).json({ error: 'One or more selected services are inactive or unavailable to your diagnostic discipline' });
+    }
+
+    const intakeDetails = [
+      intakeType === 'EXTERNAL_REFERRAL' ? `External referrer: ${String(externalReferrerName).trim()}` : 'Walk-in diagnostic service',
+      externalReference ? `Referral reference: ${String(externalReference).trim()}` : null,
+      notes ? `Clinical information: ${String(notes).trim()}` : null,
+    ].filter(Boolean).join('\n');
+
+    const generatedUpid = provisionalInput ? await ensureUniqueUPID() : null;
+    const created = await prisma.$transaction(async (tx) => {
+      if (!patient) {
+        const mrn = await allocateMrn(tx, req.ctx.facilityId);
+        patient = await tx.patient.create({
+          data: {
+            facilityId: req.ctx.facilityId,
+            universalPatientId: generatedUpid,
+            mrn,
+            ...provisionalInput,
+            entryMode: 'DIAGNOSTIC_WALK_IN',
+            registrationStatus: 'PROVISIONAL_DIAGNOSTIC',
+            identityLinkStatus: 'UNLINKED',
+            notes: 'Provisional record created by Diagnostics. Records must reconcile demographics and check for duplicates before identity linkage.',
+          },
+        });
+        await tx.subscription.updateMany({
+          where: { facilityId: req.ctx.facilityId },
+          data: { patientsUsed: { increment: 1 } },
+        });
+      }
+
+      const requests = [];
+      for (const cat of catalogue) {
+        const saved = await tx.labRequest.create({
+          data: {
+            facilityId: req.ctx.facilityId,
+            patientId: patient.id,
+            // For non-clinician intake this is the accountable registering
+            // professional, never presented as a doctor's clinical order.
+            requestedById: req.ctx.userId,
+            testName: cat.name,
+            testType: cat.testType,
+            priority: priority || 'ROUTINE',
+            notes: intakeDetails,
+            catalogueTestId: cat.id,
+            patientDateOfBirthAtOrder: patient.dateOfBirth,
+            patientGenderAtOrder: patient.gender,
+            diagnosticDiscipline: cat.category || null,
+            requestOrigin: intakeType === 'WALK_IN' ? 'DIAGNOSTIC_WALK_IN' : 'EXTERNAL_REFERRAL',
+            resultUnit: cat.unit || null,
+            referenceLow: cat.referenceLow ?? null,
+            referenceHigh: cat.referenceHigh ?? null,
+            specimenType: cat.specimenType || null,
+          },
+        });
+        requests.push(saved);
+        await tx.auditLog.create({
+          data: {
+            facilityId: req.ctx.facilityId,
+            userId: req.ctx.userId,
+            action: 'lab.referral.register',
+            resource: 'LabRequest',
+            resourceId: saved.id,
+            reason: `${intakeType}: ${cat.name}${provisionalInput ? '; provisional diagnostic patient created' : ''}`,
+            ip: req.ip,
+          },
+        });
+      }
+      return requests;
+    });
+    res.status(201).json({
+      requests: created,
+      count: created.length,
+      patient: {
+        id: patient.id,
+        universalPatientId: patient.universalPatientId,
+        mrn: patient.mrn,
+        provisional: patient.registrationStatus === 'PROVISIONAL_DIAGNOSTIC',
+      },
+    });
   } catch (e) { next(e); }
 });
 
@@ -121,6 +327,7 @@ router.post('/', orderAuth, async (req, res, next) => {
     const batch = Array.isArray(tests) && tests.length
       ? tests
       : [{ testName, testType, priority, notes, catalogueTestId }];
+    if (batch.length > 20) return res.status(400).json({ error: 'An investigation order can contain at most 20 tests' });
 
     const created = [];
     for (const item of batch) {
@@ -133,13 +340,21 @@ router.post('/', orderAuth, async (req, res, next) => {
       }
       const name = item.testName || cat?.name;
       if (!name) return res.status(400).json({ error: 'testName or catalogueTestId required' });
+      const customDiscipline = !cat
+        ? (normalizeDiscipline(item.diagnosticDiscipline)
+          || (['IMAGING', 'ECG'].includes(item.testType) ? 'IMAGING' : null))
+        : null;
+      const resolvedTestType = item.testType || cat?.testType || (customDiscipline === 'IMAGING' ? 'IMAGING' : 'LAB');
+      if (!['LAB', 'IMAGING', 'ECG', 'OTHER'].includes(resolvedTestType)) {
+        return res.status(400).json({ error: 'Unknown investigation test type' });
+      }
 
       created.push(await prisma.labRequest.create({
         data: {
           facilityId: req.ctx.facilityId, patientId, caseId: caseId || null,
           requestedById: req.ctx.userId,
           testName: name,
-          testType: item.testType || cat?.testType || 'LAB',
+          testType: resolvedTestType,
           priority: item.priority || 'ROUTINE',
           notes: item.notes || null,
           // Snapshot the catalogue reference range so a later catalogue edit
@@ -147,12 +362,12 @@ router.post('/', orderAuth, async (req, res, next) => {
           catalogueTestId: cat?.id || null,
           patientDateOfBirthAtOrder: patient.dateOfBirth,
           patientGenderAtOrder: patient.gender,
-          diagnosticDiscipline: cat?.category || null,
+          diagnosticDiscipline: cat?.category || DISCIPLINE_LABELS[customDiscipline] || 'General diagnostics',
           requestOrigin: 'CLINICIAN_ORDER',
           resultUnit: cat?.unit || null,
           referenceLow: cat?.referenceLow ?? null,
           referenceHigh: cat?.referenceHigh ?? null,
-          specimenType: cat?.specimenType || null,
+          specimenType: cat?.specimenType || item.specimenType || null,
         },
       }));
     }
@@ -219,6 +434,7 @@ const RESULT_FIELDS = [
   'reportFindings', 'reportImpression', 'attachments', 'processedById',
   'patientDateOfBirthAtOrder', 'patientGenderAtOrder', 'diagnosticDiscipline',
   'requestOrigin', 'referredAffiliateId', 'referredAt', 'resultVersion',
+  'accessionNumber', 'imagingModality', 'pacsStudyUrl', 'workflowChecklist',
 ];
 
 router.put('/:id', processAuth, async (req, res, next) => {
@@ -278,13 +494,106 @@ router.post('/:id/status', processAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Persist the discipline-specific bench/imaging workflow independently from
+// the coarse request status. A completed-step prefix is required: it must not
+// be possible to tick "report signed" while accession or acquisition is blank.
+router.put('/:id/workflow', processAuth, async (req, res, next) => {
+  try {
+    const request = await prisma.labRequest.findFirst({
+      where: scopedQueueWhere(req, { id: req.params.id, facilityId: req.ctx.facilityId }),
+    });
+    if (!request) return res.status(404).json({ error: 'Diagnostic request not found' });
+
+    const workflow = workflowFor(request);
+    if (!workflow) return res.status(400).json({ error: 'This request does not have a configured specialty workflow' });
+    const { completedStepKeys = [], accessionNumber, imagingModality, pacsStudyUrl } = req.body || {};
+    if (!validateWorkflowPrefix(workflow, completedStepKeys)) {
+      return res.status(400).json({ error: 'Complete specialty workflow steps in order without gaps' });
+    }
+
+    const isImaging = workflow.id === 'IMAGING';
+    if (!isImaging && [accessionNumber, imagingModality, pacsStudyUrl].some((value) => value !== undefined)) {
+      return res.status(400).json({ error: 'Imaging/PACS fields can only be recorded for Imaging & Radiology' });
+    }
+    const modalities = ['XRAY', 'CT', 'MRI', 'ULTRASOUND', 'MAMMOGRAPHY', 'FLUOROSCOPY', 'NUCLEAR_MEDICINE', 'OTHER'];
+    if (imagingModality && !modalities.includes(String(imagingModality).toUpperCase())) {
+      return res.status(400).json({ error: 'Unknown imaging modality' });
+    }
+    if (pacsStudyUrl) {
+      try {
+        const parsed = new URL(String(pacsStudyUrl));
+        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('protocol');
+      } catch {
+        return res.status(400).json({ error: 'PACS study link must be a valid http(s) URL' });
+      }
+    }
+
+    const previous = Array.isArray(request.workflowChecklist) ? request.workflowChecklist : [];
+    const previousByKey = new Map(previous.map((entry) => [entry.key, entry]));
+    const completedSet = new Set(completedStepKeys);
+    const workflowChecklist = workflow.steps
+      .filter((step) => completedSet.has(step.key))
+      .map((step) => previousByKey.get(step.key) || {
+        key: step.key,
+        title: step.title,
+        completedAt: new Date().toISOString(),
+        completedById: req.ctx.userId,
+      });
+
+    // Completing the operational checklist advances the shared worklist state
+    // so the specialty workflow and the hospital-wide queue never disagree.
+    // Final/preliminary reporting remains exclusive to the audited result API.
+    let lifecycleStatus = request.status;
+    if (!['PRELIMINARY', 'COMPLETED', 'CORRECTED', 'CANCELLED'].includes(request.status)) {
+      const completedCount = workflowChecklist.length;
+      const target = completedCount >= 3
+        ? 'IN_PROGRESS'
+        : completedCount >= 2 && workflow.id !== 'IMAGING'
+          ? 'COLLECTED'
+          : completedCount >= 1
+            ? 'ACCEPTED'
+            : request.status;
+      if (target !== request.status && canTransition(request.status, target)) lifecycleStatus = target;
+    }
+
+    const saved = await prisma.$transaction(async (tx) => {
+      const updated = await tx.labRequest.update({
+        where: { id: request.id },
+        data: {
+          workflowChecklist,
+          status: lifecycleStatus,
+          ...(lifecycleStatus === 'COLLECTED' && !request.collectedAt ? { collectedAt: new Date() } : {}),
+          ...(lifecycleStatus === 'IN_PROGRESS' && !request.receivedAt ? { receivedAt: new Date() } : {}),
+          ...(lifecycleStatus !== request.status ? { processedById: req.ctx.userId } : {}),
+          ...(isImaging && accessionNumber !== undefined ? { accessionNumber: String(accessionNumber || '').trim() || null } : {}),
+          ...(isImaging && imagingModality !== undefined ? { imagingModality: String(imagingModality || '').toUpperCase() || null } : {}),
+          ...(isImaging && pacsStudyUrl !== undefined ? { pacsStudyUrl: String(pacsStudyUrl || '').trim() || null } : {}),
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          facilityId: req.ctx.facilityId,
+          userId: req.ctx.userId,
+          action: 'lab.workflow.update',
+          resource: 'LabRequest',
+          resourceId: request.id,
+          reason: `${workflow.label}: ${completedStepKeys.length}/${workflow.steps.length} operational steps complete`,
+          ip: req.ip,
+        },
+      });
+      return updated;
+    });
+    res.json({ ...saved, workflow });
+  } catch (e) { next(e); }
+});
+
 router.put('/:id/result', processAuth, async (req, res, next) => {
   try {
     const exists = await prisma.labRequest.findFirst({ where: scopedQueueWhere(req, { id: req.params.id, facilityId: req.ctx.facilityId }) });
     if (!exists) return res.status(404).json({ error: 'Not found' });
 
     const {
-      result, aiDraft, resultValue, resultUnit,
+      result, aiDraft, aiDraftReviewed, resultValue, resultUnit,
       referenceLow, referenceHigh, criticalLow, criticalHigh,
       reportFindings, reportImpression, attachments, preliminary,
     } = req.body || {};
@@ -345,6 +654,7 @@ router.put('/:id/result', processAuth, async (req, res, next) => {
         data: {
           result: result ?? exists.result,
           aiDraft: aiDraft || null,
+          aiDraftReviewed: aiDraft ? Boolean(aiDraftReviewed) : exists.aiDraftReviewed,
           resultValue: resultValue != null ? Number(resultValue) : exists.resultValue,
           resultUnit: unit,
           referenceLow: ranges.referenceLow,

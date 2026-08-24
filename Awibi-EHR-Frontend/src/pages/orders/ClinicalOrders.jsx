@@ -1,10 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BedDouble, ClipboardPlus, FlaskConical, Pill, Send } from 'lucide-react';
+import { BedDouble, ClipboardPlus, FlaskConical, Pill, Plus, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSearchParams } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import api from '../../lib/api';
 import PatientPicker from '../../components/clinical/PatientPicker';
+import MedicationSafetyPanel from '../../components/clinical/MedicationSafetyPanel';
+import { can } from '../../lib/permissions';
 
 const MODES = [
   { key: 'MEDICATION', label: 'Prescribe medicine', help: 'Sends a prescription to pharmacy and the nursing drug chart.', icon: Pill, tone: 'border-purple-200 bg-purple-50 text-purple-900' },
@@ -14,9 +17,13 @@ const MODES = [
 ];
 
 const MONITORING_TYPES = [
-  ['', 'No chart requested'], ['FLUID_BALANCE', 'Fluid balance'], ['URINE_OUTPUT', 'Urine output'],
-  ['IV_FLUID', 'IV infusion'], ['BLOOD_TRANSFUSION', 'Blood transfusion'], ['NEURO_OBS', 'Neurological observations'],
-  ['GLUCOSE', 'Blood glucose'], ['ELECTROLYTE', 'Electrolyte correction'], ['CUSTOM', 'Custom chart'],
+  ['', 'No chart requested'],
+  ['URINARY_CATHETER', 'Urinary catheter output'], ['NGT_FEEDING', 'NGT feeding'],
+  ['SURGICAL_DRAIN', 'Surgical drain'], ['IV_FLUID', 'IV fluid / infusion'],
+  ['ELECTROLYTE_CORRECTION', 'Electrolyte correction infusion'], ['BLOOD_TRANSFUSION', 'Blood transfusion'],
+  ['WOUND_CARE', 'Wound care'], ['PRESSURE_AREA_REPOSITIONING', 'Pressure-area repositioning'], ['NEURO_OBSERVATION', 'Neurological observations'],
+  ['SEIZURE_WATCH', 'Seizure watch'], ['BGL_INSULIN', 'Blood glucose & insulin'],
+  ['VITALS', 'Vital signs'], ['INTAKE_OUTPUT', 'Intake & output'], ['CUSTOM', 'Custom chart'],
 ];
 
 const input = 'w-full min-h-11 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#2D5BFF]/25';
@@ -24,9 +31,13 @@ const input = 'w-full min-h-11 rounded-lg border border-gray-300 bg-white px-3 t
 export default function ClinicalOrders() {
   const qc = useQueryClient();
   const [searchParams] = useSearchParams();
+  const user = useSelector((state) => state.auth.user);
+  const mayAuthor = can(user?.role, user?.subRole, 'prescriptions_write');
   const [patientId, setPatientId] = useState(searchParams.get('patientId') || '');
   const [patient, setPatient] = useState(null);
-  const [mode, setMode] = useState('MEDICATION');
+  const requestedMode = String(searchParams.get('mode') || '').toUpperCase();
+  const [mode, setMode] = useState(MODES.some((item) => item.key === requestedMode) ? requestedMode : 'MEDICATION');
+  const [composerOpen, setComposerOpen] = useState(Boolean(requestedMode || searchParams.get('patientId')));
   const [med, setMed] = useState({ catalogueId: '', drugName: '', dosage: '', route: 'ORAL', frequency: '', duration: '', instructions: '' });
   const [care, setCare] = useState({ type: 'NURSING', name: '', goal: '', frequencyHours: '', priority: 'ROUTINE', monitoringType: '', instructions: '' });
   const [diagnostic, setDiagnostic] = useState({ testType: 'LAB', catalogueTestId: '', customName: '', priority: 'ROUTINE', notes: '' });
@@ -35,12 +46,14 @@ export default function ClinicalOrders() {
   const { data: drugData } = useQuery({
     queryKey: ['drug-catalogue-ordering'],
     queryFn: () => api.get('/orders/drug-catalogue?limit=50').then((response) => response.data),
+    enabled: mayAuthor,
   });
   const drugs = drugData?.drugs || [];
 
   const { data: testData } = useQuery({
     queryKey: ['diagnostic-catalogue-ordering'],
     queryFn: () => api.get('/lab/catalogue').then((response) => response.data),
+    enabled: mayAuthor,
   });
   const tests = useMemo(() => (testData?.tests || []).filter((test) => test.testType === diagnostic.testType), [testData, diagnostic.testType]);
 
@@ -97,39 +110,72 @@ export default function ClinicalOrders() {
 
   return (
     <div className="space-y-5 max-w-5xl">
-      <header>
-        <h1 className="text-xl font-bold text-gray-900">Orders & prescriptions</h1>
-        <p className="text-sm text-gray-500">Choose the patient once, then route the instruction to the team that must act on it.</p>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Orders & prescriptions</h1>
+          <p className="text-sm text-gray-500">Send patient orders to pharmacy, nursing, diagnostics or admissions</p>
+        </div>
+        {mayAuthor && (
+          <button type="button" onClick={() => setComposerOpen(true)}
+            className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[#2D5BFF] px-4 text-sm font-semibold text-white hover:bg-[#1a45e0]">
+            <Plus size={17} /> New order
+          </button>
+        )}
       </header>
 
-      <section className="rounded-xl border border-gray-200 bg-white p-4">
-        <PatientPicker value={patientId} onChange={(id, selected) => { setPatientId(id); setPatient(selected); }} required autoFocus />
-        {patient && <p className="mt-2 text-xs text-gray-500">Every order below will be linked to {patient.firstName} {patient.lastName}&rsquo;s hospital record and your professional account.</p>}
-      </section>
+      {!mayAuthor && (
+        <section className="space-y-3 rounded-xl border border-gray-200 bg-white p-4">
+          <p className="text-sm text-gray-600"><span className="font-semibold text-gray-900">Review only.</span> Select a patient to view active orders.</p>
+          <PatientPicker value={patientId} onChange={(id, selected) => { setPatientId(id); setPatient(selected); }} autoFocus />
+        </section>
+      )}
 
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        {MODES.map(({ key, label, help, icon: Icon, tone }) => (
-          <button key={key} type="button" onClick={() => setMode(key)} className={`min-h-32 rounded-xl border p-4 text-left transition ${mode === key ? `${tone} ring-2 ring-current/15` : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
-            <Icon size={21} className="mb-4" />
-            <div className="text-sm font-semibold">{label}</div>
-            <div className="mt-1 text-xs opacity-75">{help}</div>
-          </button>
-        ))}
-      </div>
+      {mayAuthor && composerOpen && (
+        <section className="space-y-4 rounded-xl border border-blue-200 bg-white p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-gray-900">New order</h2>
+              <p className="text-xs text-gray-500">Select the patient, then choose what the team should do.</p>
+            </div>
+            <button type="button" onClick={() => setComposerOpen(false)} aria-label="Close new order"
+              className="flex size-11 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100"><X size={18} /></button>
+          </div>
+          <PatientPicker value={patientId} onChange={(id, selected) => { setPatientId(id); setPatient(selected); }} required autoFocus />
+          {patient && <p className="text-xs text-gray-500">Ordering for {patient.firstName} {patient.lastName} · {patient.universalPatientId || patient.mrn}</p>}
 
-      <section className="rounded-xl border border-gray-200 bg-white p-5">
-        {mode === 'MEDICATION' && <MedicationForm value={med} setValue={setMed} drugs={drugs} />}
-        {mode === 'NURSING' && <NursingForm value={care} setValue={setCare} />}
-        {mode === 'DIAGNOSTIC' && <DiagnosticForm value={diagnostic} setValue={setDiagnostic} tests={tests} />}
-        {mode === 'ADMISSION' && <AdmissionForm value={admission} setValue={setAdmission} />}
-        <div className="mt-5 flex justify-end">
-          <button type="button" disabled={!patientId || busy || !valid(mode, med, care, diagnostic, admission)} onClick={() => ({ MEDICATION: medication, NURSING: nursing, DIAGNOSTIC: investigation, ADMISSION: admissionRequest }[mode]).mutate()}
-            className="flex min-h-11 items-center gap-2 rounded-lg bg-[#0B1F66] px-5 text-sm font-semibold text-white hover:bg-[#071647] disabled:opacity-40">
-            <Send size={16} /> {busy ? 'Sending…' : destinationLabel(mode)}
-          </button>
-        </div>
-      </section>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            {MODES.map(({ key, label, icon: Icon, tone }) => (
+              <button key={key} type="button" onClick={() => setMode(key)} className={`min-h-24 rounded-xl border p-3 text-left transition ${mode === key ? `${tone} ring-2 ring-current/15` : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+                <Icon size={19} className="mb-2" />
+                <div className="text-sm font-semibold">{label}</div>
+              </button>
+            ))}
+          </div>
 
+          <div className="rounded-xl border border-gray-200 p-4">
+            {mode === 'MEDICATION' && patientId && <div className="mb-4"><MedicationSafetyPanel patientId={patientId} compact /></div>}
+            {mode === 'MEDICATION' && <MedicationForm value={med} setValue={setMed} drugs={drugs} />}
+            {mode === 'NURSING' && <NursingForm value={care} setValue={setCare} />}
+            {mode === 'DIAGNOSTIC' && <DiagnosticForm value={diagnostic} setValue={setDiagnostic} tests={tests} />}
+            {mode === 'ADMISSION' && <AdmissionForm value={admission} setValue={setAdmission} />}
+            <div className="mt-5 flex justify-end">
+              <button type="button" disabled={!patientId || busy || !valid(mode, med, care, diagnostic, admission)} onClick={() => ({ MEDICATION: medication, NURSING: nursing, DIAGNOSTIC: investigation, ADMISSION: admissionRequest }[mode]).mutate()}
+                className="flex min-h-11 items-center gap-2 rounded-lg bg-[#0B1F66] px-5 text-sm font-semibold text-white hover:bg-[#071647] disabled:opacity-40">
+                <Send size={16} /> {busy ? 'Sending…' : destinationLabel(mode)}
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {mayAuthor && !composerOpen && (
+        <button type="button" onClick={() => setComposerOpen(true)}
+          className="flex min-h-28 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-blue-300 bg-blue-50/40 text-sm font-semibold text-[#2D5BFF] hover:bg-blue-50">
+          <Plus size={18} /> Start a prescription or order
+        </button>
+      )}
+
+      {patientId && (!mayAuthor || !composerOpen) && <MedicationSafetyPanel patientId={patientId} />}
       {patientId && <RecentOrders data={patientOrders} />}
     </div>
   );
@@ -151,17 +197,17 @@ function MedicationForm({ value, setValue, drugs }) {
 
 function NursingForm({ value, setValue }) {
   const set = (key) => (event) => setValue((current) => ({ ...current, [key]: event.target.value }));
-  return <div className="space-y-3"><Title title="Nursing care or monitoring order" help="If a chart is requested, nursing gets a one-click ‘Open chart’ action." />
+  return <div className="space-y-3"><Title title="Nursing care or monitoring" help="The order will appear in the nursing worklist." />
     <input className={input} value={value.name} onChange={set('name')} placeholder="What should nursing do? *" />
     <div className="grid gap-3 sm:grid-cols-2"><input className={input} value={value.goal} onChange={set('goal')} placeholder="Clinical goal / reason" /><select className={input} value={value.monitoringType} onChange={set('monitoringType')}>{MONITORING_TYPES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></div>
-    <div className="grid gap-3 sm:grid-cols-2"><input className={input} type="number" min="0" step="0.5" value={value.frequencyHours} onChange={set('frequencyHours')} placeholder="Repeat every hours (blank = once)" /><select className={input} value={value.priority} onChange={set('priority')}>{['ROUTINE','URGENT','STAT'].map((item) => <option key={item}>{item}</option>)}</select></div>
+    <div className="grid gap-3 sm:grid-cols-2"><input className={input} type="number" min="0" step="0.5" value={value.frequencyHours} onChange={set('frequencyHours')} placeholder="Repeat every (hours); leave blank for once" /><select className={input} value={value.priority} onChange={set('priority')}>{['ROUTINE','URGENT','STAT'].map((item) => <option key={item}>{item}</option>)}</select></div>
     <textarea className={input} rows={2} value={value.instructions} onChange={set('instructions')} placeholder="Bedside instructions" />
   </div>;
 }
 
 function DiagnosticForm({ value, setValue, tests }) {
   const set = (key) => (event) => setValue((current) => ({ ...current, [key]: event.target.value }));
-  return <div className="space-y-3"><Title title="Diagnostic investigation" help="Lab, imaging and ECG enter the discipline-specific worklist with patient demographics snapshotted at order time." />
+  return <div className="space-y-3"><Title title="Diagnostic investigation" help="The request will appear in the Diagnostics worklist with the patient&rsquo;s details." />
     <div className="grid gap-3 sm:grid-cols-2"><select className={input} value={value.testType} onChange={(event) => setValue((current) => ({ ...current, testType: event.target.value, catalogueTestId: '', customName: '' }))}>{['LAB','IMAGING','ECG','OTHER'].map((type) => <option key={type}>{type}</option>)}</select><select className={input} value={value.priority} onChange={set('priority')}>{['ROUTINE','URGENT','STAT'].map((item) => <option key={item}>{item}</option>)}</select></div>
     <select className={input} value={value.catalogueTestId} onChange={set('catalogueTestId')}><option value="">Choose investigation…</option>{tests.map((test) => <option key={test.id} value={test.id}>{test.name}{test.category ? ` — ${test.category}` : ''}</option>)}<option value="__OTHER__">Other / not yet in catalogue</option></select>
     {value.catalogueTestId === '__OTHER__' && <input className={input} value={value.customName} onChange={set('customName')} placeholder="Investigation name *" />}
@@ -171,7 +217,7 @@ function DiagnosticForm({ value, setValue, tests }) {
 
 function AdmissionForm({ value, setValue }) {
   const set = (key) => (event) => setValue((current) => ({ ...current, [key]: event.target.value }));
-  return <div className="space-y-3"><Title title="Admission request" help="This is the doctor’s clinical order. Nursing confirms the patient, allocates an available bed and records arrival on the ward." />
+  return <div className="space-y-3"><Title title="Admission request" help="Nursing will confirm the patient and allocate a bed." />
     <input className={input} value={value.diagnosis} onChange={set('diagnosis')} placeholder="Provisional / admitting diagnosis *" />
     <textarea className={input} rows={3} value={value.reason} onChange={set('reason')} placeholder="Reason for admission and immediate care instructions *" />
     <div className="grid gap-3 sm:grid-cols-3"><input className={input} value={value.preferredWard} onChange={set('preferredWard')} placeholder="Preferred ward (optional)" /><select className={input} value={value.bedType} onChange={set('bedType')}>{['GENERAL','PRIVATE','ICU','HDU','MATERNITY'].map((item) => <option key={item}>{item}</option>)}</select><select className={input} value={value.priority} onChange={set('priority')}>{['ROUTINE','URGENT','STAT'].map((item) => <option key={item}>{item}</option>)}</select></div>
@@ -188,5 +234,5 @@ function RecentOrders({ data }) {
     ['Investigations', data?.investigations || [], (item) => `${item.testName} · ${item.status}`],
     ['Care & monitoring', data?.standingOrders || [], (item) => `${item.name} · ${item.status}`],
   ];
-  return <section className="rounded-xl border border-gray-200 bg-white p-4"><h2 className="text-sm font-semibold text-gray-900">This patient&rsquo;s active order trail</h2><div className="mt-3 grid gap-3 md:grid-cols-3">{groups.map(([label, items, render]) => <div key={label} className="rounded-lg bg-gray-50 p-3"><div className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</div>{items.length ? <ul className="mt-2 space-y-1.5">{items.slice(0, 5).map((item) => <li key={item.id} className="text-xs text-gray-700">{render(item)}</li>)}</ul> : <p className="mt-2 text-xs text-gray-400">None active</p>}</div>)}</div></section>;
+  return <section className="rounded-xl border border-gray-200 bg-white p-4"><h2 className="text-sm font-semibold text-gray-900">Active orders</h2><div className="mt-3 grid gap-3 md:grid-cols-3">{groups.map(([label, items, render]) => <div key={label} className="rounded-lg bg-gray-50 p-3"><div className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</div>{items.length ? <ul className="mt-2 space-y-1.5">{items.slice(0, 5).map((item) => <li key={item.id} className="text-xs text-gray-700">{render(item)}</li>)}</ul> : <p className="mt-2 text-xs text-gray-400">None active</p>}</div>)}</div></section>;
 }

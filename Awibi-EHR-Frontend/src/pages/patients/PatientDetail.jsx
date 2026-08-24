@@ -297,23 +297,23 @@ function IdentityLinkModal({ patient, onClose }) {
             <div className="rounded-xl bg-green-50 border border-green-200 p-4 text-sm text-green-900">
               <div className="font-semibold">Active, consented facility link</div>
               <div className="font-mono text-xs mt-1">Identity code {patient.identityContinuityCode || 'not displayed'}</div>
-              <div className="text-xs mt-1">Assurance {patient.identityAssurance || 'not recorded'} · linked {patient.identityLinkedAt ? format(new Date(patient.identityLinkedAt), 'dd MMM yyyy') : 'date unavailable'}</div>
+              <div className="text-xs mt-1">Identity check: {patient.identityAssurance || 'not recorded'} · linked {patient.identityLinkedAt ? format(new Date(patient.identityLinkedAt), 'dd MMM yyyy') : 'date unavailable'}</div>
             </div>
             <label className="flex items-start gap-3 cursor-pointer">
               <input type="checkbox" checked={revokeConfirmed} onChange={(event) => setRevokeConfirmed(event.target.checked)} className="mt-0.5 size-5" />
-              <span className="text-sm text-gray-700">I confirm the patient requested revocation. Future deliveries will stop; existing clinical records are not deleted.</span>
+              <span className="text-sm text-gray-700">I confirm the patient asked to unlink Awibi Identity. Existing hospital records will remain.</span>
             </label>
           </>
         ) : (
           <>
-            <p className="text-sm text-gray-600">Enter the code or verified identifier presented by the patient. The API creates a facility-scoped pairwise link; it does not use the public code as the clinical record key.</p>
+            <p className="text-sm text-gray-600">Enter the code or verified account shown by the patient. This links Awibi Identity to this hospital record; it does not replace the Hosp No or Patient ID.</p>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Identity code or verified identifier</label>
               <input value={identifier} onChange={(event) => setIdentifier(event.target.value)} autoFocus
                 className="w-full min-h-11 px-3 border border-gray-300 rounded-lg text-sm font-mono" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Consent scope</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Records to share</label>
               <select value={scope} onChange={(event) => setScope(event.target.value)} className="w-full min-h-11 px-3 border border-gray-300 rounded-lg text-sm bg-white">
                 <option value="LAB_ONLY">Diagnostic results only</option>
                 <option value="FULL">All approved health-information deliveries</option>
@@ -321,7 +321,7 @@ function IdentityLinkModal({ patient, onClose }) {
             </div>
             <label className="flex items-start gap-3 cursor-pointer">
               <input type="checkbox" checked={consentConfirmed} onChange={(event) => setConsentConfirmed(event.target.checked)} className="mt-0.5 size-5" />
-              <span className="text-sm text-gray-700">I confirm explicit consent was obtained from the patient or authorized guardian for this link and scope.</span>
+              <span className="text-sm text-gray-700">I confirm the patient or guardian agreed to this link and how records will be shared.</span>
             </label>
           </>
         )}
@@ -853,7 +853,7 @@ function DocumentsTab({ patientId }) {
       qc.invalidateQueries({ queryKey: ['patient-docs', patientId] });
       toast.success('Document uploaded');
     } catch {
-      toast.error('Upload failed');
+      toast.error('Could not upload the document');
     } finally {
       setUploading(false);
       e.target.value = '';
@@ -933,7 +933,7 @@ function AddVitalModal({ open, onClose, patientId }) {
       onClose();
       setForm({ bloodPressureSystolic: '', bloodPressureDiastolic: '', heartRate: '', respiratoryRate: '', temperature: '', oxygenSaturation: '', weight: '', height: '', bloodGlucose: '', notes: '' });
     },
-    onError: () => toast.error('Failed to record vitals'),
+    onError: () => toast.error('Could not record the vital signs'),
   });
 
   const fields = [
@@ -990,7 +990,7 @@ function AddAllergyModal({ open, onClose, patientId }) {
       onClose();
       setForm({ substance: '', reaction: '', severity: 'MILD', onset: '' });
     },
-    onError: () => toast.error('Failed to add allergy'),
+    onError: () => toast.error('Could not add the allergy'),
   });
 
   return (
@@ -1043,7 +1043,7 @@ function AddConditionModal({ open, onClose, patientId }) {
       onClose();
       setForm({ name: '', icdCode: '', onset: '', status: 'ACTIVE', notes: '' });
     },
-    onError: () => toast.error('Failed to add condition'),
+    onError: () => toast.error('Could not add the condition'),
   });
 
   return (
@@ -1106,7 +1106,7 @@ function AddPrescriptionModal({ open, onClose, patientId }) {
       onClose();
       setForm({ drugName: '', dosage: '', frequency: '', duration: '', route: 'ORAL', instructions: '', status: 'ACTIVE' });
     },
-    onError: () => toast.error('Failed to add prescription'),
+    onError: () => toast.error('Could not add the prescription'),
   });
 
   return (

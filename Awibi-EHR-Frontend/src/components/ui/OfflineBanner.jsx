@@ -21,10 +21,10 @@ export default function OfflineBanner() {
     try {
       const { synced, failed } = await syncOfflineQueue();
       await refreshCount();
-      if (synced > 0) toast.success(`Synced ${synced} queued action${synced > 1 ? 's' : ''}.`);
-      if (failed > 0) toast.warning(`${failed} action${failed > 1 ? 's' : ''} could not sync and were discarded.`);
+      if (synced > 0) toast.success(`${synced} saved change${synced > 1 ? 's' : ''} sent.`);
+      if (failed > 0) toast.warning(`${failed} change${failed > 1 ? 's' : ''} could not be sent and ${failed > 1 ? 'were' : 'was'} removed from the queue.`);
     } catch (_) {
-      toast.error('Sync failed — will retry on next reconnect.');
+      toast.error('Could not send saved changes. The app will try again when the connection returns.');
     } finally {
       setSyncing(false);
     }
@@ -71,16 +71,16 @@ export default function OfflineBanner() {
 
       {!online && (
         <span>
-          You are offline.{pending > 0 ? ` ${pending} change${pending > 1 ? 's' : ''} queued.` : ' Changes will sync when reconnected.'}
+          No internet.{pending > 0 ? ` ${pending} change${pending > 1 ? 's' : ''} waiting to be sent.` : ' New changes will be sent when the connection returns.'}
         </span>
       )}
 
       {online && showBack && (
-        <span>{syncing ? 'Syncing queued changes…' : `Back online${pending > 0 ? ` — ${pending} item${pending > 1 ? 's' : ''} remaining` : ' — all synced!'}`}</span>
+        <span>{syncing ? 'Sending saved changes…' : `Internet is back${pending > 0 ? ` — ${pending} change${pending > 1 ? 's' : ''} left` : ' — all changes sent'}`}</span>
       )}
 
       {online && !showBack && pending > 0 && (
-        <span>{pending} queued change{pending > 1 ? 's' : ''} pending</span>
+        <span>{pending} saved change{pending > 1 ? 's' : ''} waiting</span>
       )}
 
       {online && pending > 0 && !syncing && (

@@ -3,6 +3,9 @@
   "version": "2.0.0",
   "description": "AwibiEHR backend — Node + Express + Prisma + PostgreSQL",
   "main": "src/server.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "nodemon src/server.js",
     "dev:local": "node scripts/run-local.js node_modules/nodemon/bin/nodemon.js src/server.js",
@@ -10,6 +13,7 @@
     "seed": "node src/seeds/demo.js",
     "seed:local": "node scripts/run-local.js src/seeds/demo.js",
     "seed:local:reset": "node scripts/run-local.js src/seeds/demo.js --reset",
+    "seed:showcase": "node scripts/run-local.js scripts/seed-showcase.js",
     "test:smoke": "node scripts/smoke-api.js",
     "test:unit": "node --test test/unit.test.js",
     "seed:reset": "node src/seeds/demo.js --reset",
@@ -20,6 +24,9 @@
     "db:studio": "prisma studio",
     "test:loops": "node scripts/audit-workflow-loops.js",
     "test:clinical-closures": "node scripts/run-local.js scripts/audit-clinical-closures.js",
+    "test:pharmacy-care": "node scripts/run-local.js scripts/audit-pharmacy-care.js",
+    "test:showcase": "node scripts/run-local.js scripts/audit-showcase.js",
+    "test:diagnostic-ordering": "node scripts/run-local.js scripts/audit-diagnostic-ordering.js",
     "test:contract": "node scripts/check-api-contract.js",
     "test:roles": "node scripts/verify-role-dashboards.js",
     "test:tenancy": "node scripts/verify-tenancy.js",
@@ -31,7 +38,7 @@
   "dependencies": {
     "@prisma/client": "^5.10.0",
     "bcryptjs": "^2.4.3",
-    "cloudinary": "^1.41.3",
+    "cloudinary": "^2.10.1",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
@@ -43,7 +50,7 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
-    "nodemailer": "^6.9.7",
+    "nodemailer": "^9.0.5",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "passport-jwt": "^4.0.1",
@@ -51,7 +58,6 @@
     "pdfkit": "^0.19.1",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.0",
-    "uuid": "^9.0.1",
     "winston": "^3.11.0"
   },
   "devDependencies": {

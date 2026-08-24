@@ -53,6 +53,8 @@ This file contains work that cannot be made production-complete by local source 
 [ ] Define the patient-facing support and appeal pathway for every Identity access-log event and incorrect report.
 
 6. DIAGNOSTICS, PACS, LABORATORY, AND DEVICES
+[x] Local synthetic beta has five discipline worklists, role scoping, clinician-order intake, existing-ID or provisional-unregistered external/walk-in intake, multi-service checkbox selection, ordered specialty milestone checklists, imaging accession/modality/PACS-link fields, preliminary/final/corrected reporting, and critical-result closure controls.
+[ ] Define who reconciles every PROVISIONAL_DIAGNOSTIC patient, the maximum reconciliation time, duplicate/MPI matching and merge rules, escalation for missing/uncertain demographics, and the rule forbidding Identity linkage until reconciliation.
 [ ] Select and integrate the production PACS/VNA/DICOM viewer, modality worklist, storage lifecycle, encryption, backup, and diagnostic-monitor standards.
 [ ] Integrate barcode/accession printers, scanners, specimen labels, rejection/recollection reasons, chain of custody, and analyser interfaces.
 [ ] Approve laboratory QC, calibration, delta checks, panic-value call/read-back, amended reports, downtime registers, and external referral reconciliation.
@@ -61,14 +63,18 @@ This file contains work that cannot be made production-complete by local source 
 [ ] Establish biomedical/IT device inventory, patching, service, replacement, and downtime contacts.
 
 7. MEDICINES, CLINICAL KNOWLEDGE, AND PATIENT SAFETY
-[x] Local synthetic beta now has a pharmacist demo, prescription queue, patient-linked dispense events, quantity/amount, atomic stock decrement, reorder levels and nearest-expiry visibility.
+[x] Local synthetic beta now has a pharmacist demo, prescription queue, patient-linked dispense events, quantity/amount, atomic stock decrement, inventory, Health-ID medication profile, actual/potential DTP tracker, selectable SOAP or CORE–PRIME–FARM pharmaceutical care plans, author signing, follow-up, and shared partial medication-safety screening visible to prescribing, nursing and pharmacy roles.
 [ ] License and integrate an authoritative drug interaction, allergy, duplication, dose, pregnancy, renal/hepatic, and formulary knowledge source.
 [ ] Validate drug naming, strengths, pack sizes, controlled-drug workflow, procurement, inventory, dispensing, returns, expiry, stock counts, and recall procedures.
-[ ] Validate WHO paediatric anthropometry/BMI datasets and charts under a named paediatric owner; adult BMI bands must never classify children.
+[x] Official WHO 2006/2007 BMI-for-age LMS datasets are bundled from birth through 19 years; adult BMI bands cannot classify children in the Scout UI.
+[ ] A named paediatric clinical owner must validate the BMI-for-age workflow, measurement practice and local escalation language before production clinical release. Remaining growth indicators still need official datasets.
 [ ] Establish clinical-hazard logs, safety cases, severity/likelihood scoring, mitigation owners, residual-risk acceptance, and post-release surveillance.
 [ ] Run realistic Nigeria-context simulations for emergency arrival without ID, unreliable network, shared family phone, duplicate names, referral, transfusion, critical lab, and result correction.
 
 8. OBSERVABILITY, SUPPORT, AND INCIDENT RESPONSE
+[ ] Publish each facility's exact /clinic/<stored-slug> appointment link on its approved website, WhatsApp/SMS templates and QR materials; never construct the slug from the display name.
+[ ] Assign Records/Reception coverage and response-time ownership for Booking requests so a submitted request is confirmed, rescheduled or rejected promptly rather than silently waiting.
+[ ] Validate the facility's published doctors, specialties, reception contact, opening hours, slot duration, holidays and temporary closures before sharing the public link.
 [ ] Configure privacy-safe application logs, metrics, traces, uptime checks, database monitoring, queue monitoring, alert routing, and on-call ownership.
 [ ] Configure error tracking with patient data scrubbing and confirm no tokens, passwords, NINs, clinical text, or document URLs enter third-party telemetry.
 [ ] Define severity levels, response times, customer notification, regulatory/legal escalation, evidence preservation, breach response, and post-incident review.
@@ -102,8 +108,10 @@ This file contains work that cannot be made production-complete by local source 
 [ ] A final go/no-go meeting records the decision, scope, date, owners, evidence, residual risks, and rollback trigger.
 
 12. AWIBI CLINICAL AI FOR VOICE AND HANDWRITING
+[ ] Use PRODUCTION_ARCHITECTURE_DECISIONS_2026-08-23.md as the technical baseline: prototype faster-whisper for speech and PaddleOCR + TrOCR for page/handwriting extraction, then validate on consented/de-identified Nigerian clinical data before enabling real patient use.
 [ ] Deploy or select the Awibi clinical AI service that implements POST /transcribe-soap and POST /ocr-soap and returns structured JSON for chiefComplaint, history, reviewOfSystems, examination, assessment, and plan.
 [ ] Implement POST /nursing-observation on the same service. It must accept source_file plus patient_id, monitoring_sheet_id, monitoring_type, monitoring_title, capture_type, and field_definitions; return observation.values, observation.notes, observation.abnormalSuggested, transcript, and confidence; and never save an observation or complete an order itself.
+[ ] Implement POST /diagnostic-result on the same service. It must accept source_file plus request_id, patient_id, test_name, test_type, diagnostic_discipline, result_unit, reference ranges, capture_type, and report_fields; return a draft resultValue, result narrative, findings, impression, notes/transcript, and confidence. It must never finalize a result, complete the doctor request, or deliver data to the patient.
 [ ] Set AWIBI_CLINICAL_AI_URL in the EHR backend environment to that service base URL. Set AWIBI_CLINICAL_AI_KEY through the secret store if the service requires bearer authentication. Never commit either value.
 [ ] Confirm the service accepts WebM/MP3/M4A/WAV/OGG audio and JPG/PNG/WebP/PDF documents up to 25 MB, deletes source files after processing, and does not train on patient content.
 [ ] Complete a DPIA and processing agreement for the AI service, including data location, subprocessors, retention, deletion, incident notice, access control, and audit evidence.

@@ -167,12 +167,21 @@ async function run() {
     await expectStatus('records cannot create allergies', `/patients/${patient.id}/allergies`, tokens.records, 403, { substance: 'Security probe' });
     await expectStatus('records cannot create clinical conditions', `/patients/${patient.id}/conditions`, tokens.records, 403, { name: 'Security probe' });
     await expectStatus('records cannot prescribe medication', `/patients/${patient.id}/prescriptions`, tokens.records, 403, { drugName: 'Security probe' });
-    await expectStatus('administrators cannot record clinical vitals', `/patients/${patient.id}/vitals`, tokens.admin, 403, { heartRate: 72 });
     await expectStatus('nurses cannot create diagnoses', `/patients/${patient.id}/conditions`, tokens.nurse, 403, { name: 'Security probe' });
     await expectStatus('nurses cannot record impossible vital values', `/patients/${patient.id}/vitals`, tokens.nurse, 400, { temperature: 900 });
 
     const createdClinical = [];
     try {
+      const adminVital = await request(`/patients/${patient.id}/vitals`, {
+        token: tokens.admin,
+        method: 'POST',
+        body: { heartRate: 71, notes: 'Automated facility-administrator capability check' },
+      });
+      assert('facility administrators can initiate attributed clinical workflows',
+        adminVital.status === 201 && adminVital.data?.recordedById === profiles.admin?.data?.user?.id,
+        `status ${adminVital.status}`);
+      if (adminVital.data?.id) createdClinical.push(['vitals', adminVital.data.id]);
+
       const nurseVital = await request(`/patients/${patient.id}/vitals`, {
         token: tokens.nurse,
         method: 'POST',
@@ -238,7 +247,7 @@ async function run() {
       scheduledAt: new Date(Date.now() + 86_400_000).toISOString(),
       visitType: 'ROUTINE',
     });
-    await expectStatus('secondary facility administrator cannot create a diagnostic order', '/lab', secondaryToken, 403, {
+    await expectStatus('secondary facility cannot create a diagnostic order for a primary-facility patient', '/lab', secondaryToken, 404, {
       patientId: patient.id, testName: 'Isolation probe', testType: 'LAB',
     });
     await expectStatus('secondary facility cannot admit primary patient', '/admissions', secondaryToken, 404, {
@@ -532,11 +541,17 @@ async function run() {
     });
     const patientId = patients[0]?.id;
 
-    // Monitoring: nurse authors, admin only observes.
+    // Monitoring: bedside authorship stays attributed; facility administration
+    // can initiate any facility workflow under the agreed capability policy.
     await expectStatus('monitoring templates are available to the nurse', '/nursing/monitoring-templates', tokens.nurse, 200);
     await expectStatus('admin can read ward monitoring', '/nursing/monitoring-sheets', tokens.admin, 200);
-    await expectStatus('admin cannot author a monitoring sheet', '/nursing/monitoring-sheets', tokens.admin, 403,
-      { patientId, type: 'IV_FLUID' });
+    const adminSheet = await request('/nursing/monitoring-sheets', {
+      token: tokens.admin, method: 'POST', body: { patientId, type: 'IV_FLUID' },
+    });
+    assert('facility admin can initiate an attributed monitoring sheet',
+      adminSheet.status === 201 && adminSheet.data?.createdById === profiles.admin?.data?.user?.id,
+      `status ${adminSheet.status}`);
+    if (adminSheet.data?.id) await db.monitoringSheet.delete({ where: { id: adminSheet.data.id } });
     await expectStatus('records officer has no ward monitoring access', '/nursing/monitoring-sheets', tokens.records, 403);
     await expectStatus('nurse ward summary loads', '/nursing/stats', tokens.nurse, 200);
 
@@ -622,11 +637,11 @@ async function run() {
           const alerts = await request('/lab/alerts/critical', { token: tokens.doctor });
           assert('critical result reaches the doctor alert queue', alerts.data?.criticalCount >= 1, `count ${alerts.data?.criticalCount}`);
 
-          await expectStatus('admin cannot acknowledge a critical result', `/lab/${labId}/acknowledge`, tokens.admin, 403, {});
           const ack = await request(`/lab/${labId}/acknowledge`, {
             token: tokens.doctor, method: 'POST', body: { reason: 'Smoke test acknowledgement' },
           });
           assert('doctor acknowledges the critical result', ack.status === 200 && Boolean(ack.data?.criticalAckAt), `status ${ack.status}`);
+          await expectStatus('an acknowledged critical result cannot be acknowledged twice', `/lab/${labId}/acknowledge`, tokens.admin, 409, {});
 
           await db.labRequest.delete({ where: { id: labId } });
         }
@@ -661,10 +676,9 @@ async function run() {
         const stale = await request(`/cases/${caseId}`, { token: tokens.doctor, method: 'PUT', body: { plan: 'x', version: 1 } });
         assert('stale edits are blocked by optimistic locking', stale.status === 409, `status ${stale.status}`);
 
-        await expectStatus('admin cannot sign a clinical note', `/cases/${caseId}/sign`, tokens.admin, 403, {});
-
         const signed = await request(`/cases/${caseId}/sign`, { token: tokens.doctor, method: 'POST', body: {} });
         assert('doctor signs the note', signed.status === 200 && signed.data?.status === 'SIGNED', `status ${signed.status}`);
+        await expectStatus('a signed note cannot be signed twice', `/cases/${caseId}/sign`, tokens.admin, 409, {});
 
         const edit = await request(`/cases/${caseId}`, { token: tokens.doctor, method: 'PUT', body: { plan: 'tamper' } });
         assert('a signed note cannot be edited', edit.status === 409, `status ${edit.status}`);
@@ -956,6 +970,7 @@ async function run() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fullName: 'Smoke Booking', phone: '08012345678',
+          doctorId: doctor?.id,
           requestedAt: new Date(Date.now() + 3 * 86400000).toISOString(), reason: 'Smoke test',
         }),
       });
@@ -976,6 +991,9 @@ async function run() {
         assert('records officer confirms a booking', confirmed.status === 200, `status ${confirmed.status}`);
         assert('confirming creates a provisional patient for a new booker',
           confirmed.data?.createdPatient === true, 'no patient created');
+        assert('confirmed public booking reaches the selected doctor schedule',
+          !doctor?.id || confirmed.data?.appointment?.doctorId === doctor.id,
+          `expected ${doctor?.id || 'none'}, got ${confirmed.data?.appointment?.doctorId || 'none'}`);
 
         if (confirmed.data?.appointment?.id) await db.appointment.delete({ where: { id: confirmed.data.appointment.id } });
         if (confirmed.data?.patientId) await db.patient.delete({ where: { id: confirmed.data.patientId } });

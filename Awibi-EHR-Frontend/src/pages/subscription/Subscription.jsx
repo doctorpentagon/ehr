@@ -133,7 +133,7 @@ export default function Subscription() {
         toast.success('Plan updated!');
       }
     },
-    onError: err => toast.error(err.response?.data?.error || 'Upgrade failed'),
+    onError: err => toast.error(err.response?.data?.error || 'Could not update the plan'),
   });
 
   const { mutate: initPay } = useMutation({

@@ -139,7 +139,7 @@ function DeptModal({ open, onClose, dept, staff }) {
       toast.success(isEdit ? 'Department updated' : 'Department created');
       onClose();
     },
-    onError: () => toast.error('Failed to save'),
+    onError: () => toast.error('Could not save the department'),
   });
 
   const doctors = staff.filter(s => s.subRole === 'DOCTOR' || s.role === 'CLINICIAN');

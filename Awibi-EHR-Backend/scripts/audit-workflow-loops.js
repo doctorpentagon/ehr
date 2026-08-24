@@ -21,18 +21,26 @@ const step = (loop, label, passed, detail = '') => {
     await new Promise((r) => setTimeout(r, 1000));
   }
   const acc = (await (await fetch(`${B}/auth/local-demo-accounts`)).json()).accounts;
-  const tk = async (f) => (await (await fetch(`${B}/auth/local-demo-login`, {
+  const primaryAdmin = acc.find((a) => a.role === 'ADMIN' && a.facility.name.includes('UCH'));
+  if (!primaryAdmin) throw new Error('UCH facility administrator is not available');
+  const facilityId = primaryAdmin.facility.id;
+  const inPrimaryFacility = (predicate) => (account) => account.facility.id === facilityId && predicate(account);
+  const tk = async (f) => {
+    const account = acc.find(f);
+    if (!account) throw new Error('Required same-facility demo role is not available');
+    return (await (await fetch(`${B}/auth/local-demo-login`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId: acc.find(f).id }),
+    body: JSON.stringify({ userId: account.id }),
   })).json()).accessToken;
+  };
 
   const T = {
-    nurse: await tk((a) => a.subRole === 'NURSE'),
-    doctor: await tk((a) => a.subRole === 'DOCTOR'),
-    lab: await tk((a) => a.subRole === 'LAB'),
-    pharmacist: await tk((a) => a.subRole === 'PHARMACIST'),
-    records: await tk((a) => a.role === 'RECORDS'),
-    admin: await tk((a) => a.role === 'ADMIN' && a.facility.name.includes('UCH')),
+    nurse: await tk(inPrimaryFacility((a) => a.subRole === 'NURSE')),
+    doctor: await tk(inPrimaryFacility((a) => a.subRole === 'DOCTOR')),
+    lab: await tk(inPrimaryFacility((a) => a.subRole === 'LAB')),
+    pharmacist: await tk(inPrimaryFacility((a) => a.subRole === 'PHARMACIST')),
+    records: await tk(inPrimaryFacility((a) => a.role === 'RECORDS')),
+    admin: await tk((a) => a.id === primaryAdmin.id),
   };
   const H = (t) => ({ Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' });
   const call = async (m, p, t, body) => {
@@ -162,6 +170,62 @@ const step = (loop, label, passed, detail = '') => {
   step('diagnostics', 'an out-of-range result is flagged',
     Boolean(result.d?.abnormalFlag) && result.d.abnormalFlag !== 'NORMAL', result.d?.abnormalFlag);
   if (lab.d?.id) cleanup.push(() => call('DELETE', `/lab/${lab.d.id}`, T.doctor));
+
+  const diagnosticServices = ['IMAGING', 'HAEMATOLOGY', 'CHEMICAL_PATHOLOGY', 'MICROBIOLOGY', 'HISTOPATHOLOGY'];
+  const serviceTests = [];
+  for (const discipline of diagnosticServices) {
+    const serviceCatalogue = await call('GET', `/lab/catalogue?discipline=${discipline}`, T.lab);
+    const serviceTest = serviceCatalogue.d?.tests?.[0];
+    step('diagnostics', `${discipline.toLowerCase().replaceAll('_', ' ')} has an approved catalogue`,
+      serviceCatalogue.status === 200 && Boolean(serviceTest?.id));
+    if (serviceTest) serviceTests.push({ discipline, test: serviceTest });
+  }
+  step('diagnostics', 'a doctor cannot register a diagnostic walk-in as if they received it',
+    (await call('POST', '/lab/referrals', T.doctor, {
+      patientId: patient.id, catalogueTestId: serviceTests[0]?.test?.id, intakeType: 'WALK_IN',
+    })).status === 403);
+
+  for (const { discipline, test } of serviceTests) {
+    const referral = await call('POST', '/lab/referrals', T.lab, {
+      patientId: patient.id,
+      catalogueTestId: test.id,
+      intakeType: discipline === 'IMAGING' ? 'EXTERNAL_REFERRAL' : 'WALK_IN',
+      externalReferrerName: discipline === 'IMAGING' ? 'Loop Audit Primary Care Clinic' : undefined,
+      externalReference: `LOOP-${discipline}-${Date.now()}`,
+      notes: 'Synthetic workflow verification; no clinical decision.',
+    });
+    const referralRecord = referral.d?.requests?.[0] || referral.d;
+    step('diagnostics', `${discipline.toLowerCase().replaceAll('_', ' ')} intake is Health-ID linked and origin-labelled`,
+      referral.status === 201
+        && referralRecord?.patientId === patient.id
+        && ['EXTERNAL_REFERRAL', 'DIAGNOSTIC_WALK_IN'].includes(referralRecord?.requestOrigin));
+    if (!referralRecord?.id) continue;
+    cleanup.push(() => call('DELETE', `/lab/${referralRecord.id}`, T.doctor));
+
+    const scopedWorklist = await call('GET', `/lab?discipline=${discipline}&status=PENDING`, T.lab);
+    step('diagnostics', `${discipline.toLowerCase().replaceAll('_', ' ')} request appears in its own worklist`,
+      scopedWorklist.d?.requests?.some((item) => item.id === referralRecord.id));
+
+    if (test.testType === 'IMAGING' || test.testType === 'ECG') {
+      await call('POST', `/lab/${referralRecord.id}/status`, T.lab, { status: 'IN_PROGRESS' });
+      const report = await call('PUT', `/lab/${referralRecord.id}/result`, T.lab, {
+        reportFindings: 'Synthetic acquisition completed and images reviewed.',
+        reportImpression: 'Synthetic workflow verification only.',
+      });
+      step('diagnostics', `${discipline.toLowerCase().replaceAll('_', ' ')} completes acquisition and structured reporting`,
+        report.status === 200 && report.d?.status === 'COMPLETED');
+    } else {
+      await call('POST', `/lab/${referralRecord.id}/status`, T.lab, {
+        status: 'COLLECTED', specimenId: `LOOP-${discipline}-${Date.now()}`,
+      });
+      await call('POST', `/lab/${referralRecord.id}/status`, T.lab, { status: 'IN_PROGRESS' });
+      const report = await call('PUT', `/lab/${referralRecord.id}/result`, T.lab, {
+        result: 'Synthetic specimen processed, examined and reported.',
+      });
+      step('diagnostics', `${discipline.toLowerCase().replaceAll('_', ' ')} completes specimen-to-report lifecycle`,
+        report.status === 200 && report.d?.status === 'COMPLETED');
+    }
+  }
 
   // ── 6. Pharmacy: prescription → issue → stock ledger ────────────────────
   console.log('\n  6. PHARMACY');

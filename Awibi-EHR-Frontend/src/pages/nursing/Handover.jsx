@@ -146,7 +146,7 @@ export default function Handover() {
           <div className="py-16 flex justify-center"><Spinner size="lg" /></div>
         ) : !notes.length ? (
           <EmptyState icon={ClipboardList} title="No shift reports"
-            description="Record a structured SBAR report so the next shift knows exactly what is outstanding." />
+            description="Record an SBAR handover for the next shift." />
         ) : (
           <div className="divide-y divide-gray-100">
             {notes.map(n => (

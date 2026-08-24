@@ -53,7 +53,7 @@ export default function VerifyOTP() {
       await api.post('/auth/resend-otp', { email });
       toast.success('New OTP sent');
     } catch (_) {
-      toast.error('Failed to resend');
+      toast.error('Could not send a new code');
     }
   };
 

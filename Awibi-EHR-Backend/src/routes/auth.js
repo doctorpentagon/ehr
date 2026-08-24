@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const passport = require('passport');
-const { v4: uuidv4, validate: isUuid } = require('uuid');
+const { randomUUID } = require('node:crypto');
 const rateLimit = require('express-rate-limit');
 const { prisma } = require('../utils/database');
 const { sendOTP, sendPasswordReset } = require('../utils/mailer');
@@ -11,6 +11,9 @@ const { authenticate } = require('../middleware/auth');
 const { getPermissions } = require('../utils/permissions');
 const { generateStaffId } = require('../utils/upid');
 const { isStrongPassword } = require('../utils/passwords');
+
+const uuidv4 = () => randomUUID();
+const isUuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 
 const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { error: 'Too many login attempts — try again in 15 minutes' }, standardHeaders: true, legacyHeaders: false });
 const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 5, message: { error: 'Too many registrations from this IP — try again in an hour' }, standardHeaders: true, legacyHeaders: false });
@@ -29,7 +32,10 @@ async function loadFacility(facilityId) {
   if (!facilityId) return null;
   return prisma.facility.findUnique({
     where: { id: facilityId },
-    select: { id: true, name: true, type: true, plan: true, phone: true, address: true, logo: true, profileComplete: true },
+    // `slug` is the facility's stable, publishable patient-booking address.
+    // Returning it with the signed-in facility lets reception copy the real
+    // link from Appointments instead of guessing from a facility name.
+    select: { id: true, name: true, slug: true, type: true, plan: true, phone: true, address: true, logo: true, profileComplete: true },
   });
 }
 

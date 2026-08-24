@@ -11,6 +11,21 @@ const { generateUPID } = require('../utils/upid');
 
 const RESET = process.argv.includes('--reset');
 
+// A permanent, easy-to-recall local fixture for cross-module manual QA. Unlike
+// the realistic demo patients, this ID does not change when the demo is reset.
+const PERMANENT_TEST_PATIENT = {
+  universalPatientId: 'AWB-TEST2PAT',
+  mrn: 'DEMO-TEST-001',
+  firstName: 'Awibi',
+  lastName: 'Test Patient',
+  dateOfBirth: new Date('1990-01-01'),
+  gender: 'FEMALE',
+  phone: '08000000001',
+  email: 'test.patient@awibi.test',
+  status: 'OUT_PATIENT',
+  notes: 'Permanent synthetic patient for local EHR workflow testing only. Never use for real care.',
+};
+
 const REQUIRED_DEMO_VARS = [
   'DEMO_PASSWORD',
   'DEMO_ADMIN_EMAIL',
@@ -82,7 +97,12 @@ async function seed() {
       update: { facilityId: existingFacility.id, isActive: true, role: 'CLINICIAN', subRole: 'PHARMACIST' },
       create: { firstName: 'Amina', lastName: 'Yusuf', email: demoCredentials.pharmacist, passwordHash: pharmacyPassword, role: 'CLINICIAN', subRole: 'PHARMACIST', facilityId: existingFacility.id, staffId: 'UCH-STF-100006', emailVerified: true, isActive: true, specialty: 'Clinical Pharmacy' },
     });
-    console.log('✅  Demo data already seeded; pharmacy demo access verified. Use --reset to re-seed all fixtures.');
+    await prisma.patient.upsert({
+      where: { universalPatientId: PERMANENT_TEST_PATIENT.universalPatientId },
+      update: { facilityId: existingFacility.id, ...PERMANENT_TEST_PATIENT },
+      create: { facilityId: existingFacility.id, ...PERMANENT_TEST_PATIENT },
+    });
+    console.log('✅  Demo data already seeded; pharmacy access and permanent test patient verified. Use --reset to re-seed all fixtures.');
     process.exit(0);
   }
 
@@ -160,6 +180,7 @@ async function seed() {
     { firstName: 'Drew', lastName: 'Cano', dateOfBirth: new Date('1980-05-12'), gender: 'MALE', phone: '09090909096', email: 'drew@gmail.com', status: 'OUT_PATIENT' },
     { firstName: 'Orlando', lastName: 'Diggs', dateOfBirth: new Date('1970-12-03'), gender: 'MALE', phone: '09090909097', email: 'orlando@gmail.com', bloodType: 'B+', status: 'OUT_PATIENT' },
     { firstName: 'Andi', lastName: 'Lane', dateOfBirth: new Date('1993-08-25'), gender: 'FEMALE', phone: '09090909098', email: 'andi@gmail.com', status: 'OUT_PATIENT' },
+    PERMANENT_TEST_PATIENT,
   ];
 
   const patients = [];

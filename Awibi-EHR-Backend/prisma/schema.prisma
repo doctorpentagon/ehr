@@ -292,19 +292,21 @@ model User {
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
 
-  facility                Facility?              @relation(fields: [facilityId], references: [id])
-  authoredCases           Case[]                 @relation("CaseAuthor")
-  signedCases             Case[]                 @relation("CaseSigner")
-  reviewedCases           Case[]                 @relation("CaseReviewer")
-  doctorAppointments      Appointment[]          @relation("AppointmentDoctor")
+  facility                Facility?                @relation(fields: [facilityId], references: [id])
+  authoredCases           Case[]                   @relation("CaseAuthor")
+  signedCases             Case[]                   @relation("CaseSigner")
+  reviewedCases           Case[]                   @relation("CaseReviewer")
+  doctorAppointments      Appointment[]            @relation("AppointmentDoctor")
   uploadedDocs            PatientDocument[]
-  labRequests             LabRequest[]           @relation("LabRequestedBy")
-  paymentsReceived        Payment[]              @relation("PaymentReceivedBy")
-  messagesSent            Message[]              @relation("MessageSender")
-  messagesReceived        Message[]              @relation("MessageRecipient")
-  monitoringEntries       MonitoringEntry[]      @relation("MonitoringEntryRecorder")
-  monitoringSheetsCreated MonitoringSheet[]      @relation("MonitoringSheetCreator")
-  clinicSessions          ClinicScheduleDoctor[] @relation("ClinicDoctor")
+  labRequests             LabRequest[]             @relation("LabRequestedBy")
+  paymentsReceived        Payment[]                @relation("PaymentReceivedBy")
+  messagesSent            Message[]                @relation("MessageSender")
+  messagesReceived        Message[]                @relation("MessageRecipient")
+  monitoringEntries       MonitoringEntry[]        @relation("MonitoringEntryRecorder")
+  monitoringSheetsCreated MonitoringSheet[]        @relation("MonitoringSheetCreator")
+  clinicSessions          ClinicScheduleDoctor[]   @relation("ClinicDoctor")
+  pharmacyProblems        PharmacyTherapyProblem[] @relation("PharmacyProblemIdentifier")
+  pharmacyCarePlans       PharmacyCarePlan[]       @relation("PharmacyCarePlanPharmacist")
 }
 
 model Patient {
@@ -332,6 +334,10 @@ model Patient {
   emergencyContactRelation String?
   status                   PatientStatus @default(OUT_PATIENT)
   entryMode                String?       @default("WALK_IN")
+  // A constrained provisional record lets Diagnostics safely accession a
+  // walk-in before full reception registration. It can later be completed or
+  // linked to Awibi Identity without leaving an orphan result behind.
+  registrationStatus       String        @default("COMPLETE")
   avatar                   String?
   notes                    String?
   consentLinkedToIdentity  Boolean       @default(false)
@@ -369,6 +375,8 @@ model Patient {
   drugAdministrations DrugAdministration[]
   growthMeasurements  GrowthMeasurement[]
   handoverNotes       HandoverNote[]
+  pharmacyProblems    PharmacyTherapyProblem[]
+  pharmacyCarePlans   PharmacyCarePlan[]
 
   // Household membership. Null household means the patient is not linked.
   householdId  String?                @db.Uuid
@@ -441,8 +449,8 @@ model Case {
   reviewedById          String?       @db.Uuid
   /// When the clinical contact actually occurred. This can pre-date createdAt
   /// for a declared late entry; createdAt remains the immutable EHR audit time.
-  occurredAt             DateTime      @default(now())
-  lateEntryReason        String?
+  occurredAt            DateTime      @default(now())
+  lateEntryReason       String?
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
 
@@ -526,9 +534,80 @@ model Prescription {
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 
-  patient         Patient              @relation(fields: [patientId], references: [id])
+  patient         Patient                  @relation(fields: [patientId], references: [id])
   administrations DrugAdministration[]
   dispenses       Dispense[]
+  therapyProblems PharmacyTherapyProblem[]
+}
+
+/// A pharmacist-identified actual or potential medicine-related problem.
+/// It is deliberately separate from a prescription: one issue can concern the
+/// whole regimen, adherence, an untreated indication, an adverse reaction or
+/// monitoring rather than one individual medicine.
+model PharmacyTherapyProblem {
+  id             String    @id @default(uuid()) @db.Uuid
+  facilityId     String    @db.Uuid
+  patientId      String    @db.Uuid
+  prescriptionId String?   @db.Uuid
+  identifiedById String    @db.Uuid
+  category       String
+  problemType    String    @default("ACTUAL")
+  severity       String    @default("MODERATE")
+  description    String
+  evidence       String?
+  recommendation String?
+  status         String    @default("OPEN")
+  resolution     String?
+  resolvedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  patient      Patient       @relation(fields: [patientId], references: [id])
+  prescription Prescription? @relation(fields: [prescriptionId], references: [id])
+  identifiedBy User          @relation("PharmacyProblemIdentifier", fields: [identifiedById], references: [id])
+
+  @@index([facilityId, patientId, status])
+  @@index([prescriptionId])
+}
+
+/// Structured clinical-pharmacy documentation. SOAP and pharmaceutical-care
+/// fields live together so staff do not duplicate one consultation in two
+/// disconnected notes. Signed plans are immutable through the API.
+model PharmacyCarePlan {
+  id                  String    @id @default(uuid()) @db.Uuid
+  facilityId          String    @db.Uuid
+  patientId           String    @db.Uuid
+  pharmacistId        String    @db.Uuid
+  documentationFormat String    @default("SOAP")
+  subjective          String?
+  objective           String?
+  assessment          String?
+  plan                String?
+  coreCondition       String?
+  coreOutcomes        String?
+  coreRegimen         String?
+  coreEvaluation      String?
+  primeProblems       String?
+  farmFindings        String?
+  farmAssessment      String?
+  farmResolution      String?
+  farmMonitoring      String?
+  patientNeeds        String?
+  therapyGoals        String?
+  interventions       String?
+  followUpPlan        String?
+  adherence           String?
+  status              String    @default("DRAFT")
+  followUpAt          DateTime?
+  signedAt            DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  patient    Patient @relation(fields: [patientId], references: [id])
+  pharmacist User    @relation("PharmacyCarePlanPharmacist", fields: [pharmacistId], references: [id])
+
+  @@index([facilityId, patientId, createdAt])
+  @@index([pharmacistId, status])
 }
 
 model Appointment {
@@ -600,10 +679,16 @@ model LabRequest {
   receivedAt   DateTime?
 
   // ── Imaging / structured report ────────────────────────────────────────────
-  reportFindings   String?
-  reportImpression String?
+  reportFindings    String?
+  reportImpression  String?
+  accessionNumber   String?
+  imagingModality   String?
+  pacsStudyUrl      String?
+  // Ordered, specialty-specific operational milestones with the completing
+  // professional and time retained for audit/reconstruction.
+  workflowChecklist Json    @default("[]")
   // [{ url, name, mimeType, sizeBytes }]
-  attachments      Json    @default("[]")
+  attachments       Json    @default("[]")
 
   // ── Verification and doctor review ─────────────────────────────────────────
   verifiedById       String?   @db.Uuid
@@ -834,15 +919,15 @@ enum MonitoringStatus {
 }
 
 model MonitoringSheet {
-  id            String           @id @default(uuid()) @db.Uuid
-  facilityId    String           @db.Uuid
-  patientId     String           @db.Uuid
-  caseId        String?          @db.Uuid
-  admissionId   String?          @db.Uuid
-  createdById   String?          @db.Uuid
-  type          MonitoringType
-  customType    String?
-  title         String
+  id              String           @id @default(uuid()) @db.Uuid
+  facilityId      String           @db.Uuid
+  patientId       String           @db.Uuid
+  caseId          String?          @db.Uuid
+  admissionId     String?          @db.Uuid
+  createdById     String?          @db.Uuid
+  type            MonitoringType
+  customType      String?
+  title           String
   // What this sheet monitors. Item definitions live here rather than in their own
   // table because the engine is already driven by this shape and a parallel
   // table would mean two sources of truth for the same thing.
@@ -851,23 +936,23 @@ model MonitoringSheet {
   //    required, category, frequency,
   //    goalMin, goalMax,            // inside this band is normal
   //    criticalLow, criticalHigh }] // outside this band needs a doctor now
-  fields        Json             @default("[]")
+  fields          Json             @default("[]")
   // Sheet-specific settings the templates need, e.g. { bagSizeMl: 1000 } for an
   // IV bag so remaining volume can be derived rather than typed.
-  metadata      Json             @default("{}")
-  targetValue   Float?
-  targetUnit    String?
-  frequencyMins Int?
-  instructions  String?
+  metadata        Json             @default("{}")
+  targetValue     Float?
+  targetUnit      String?
+  frequencyMins   Int?
+  instructions    String?
   /// The doctor's order this chart was opened against, when there was one.
   /// A chart that exists because somebody ordered it should say so.
-  orderId       String?          @db.Uuid
-  status        MonitoringStatus @default(ACTIVE)
-  startedAt     DateTime         @default(now())
+  orderId         String?          @db.Uuid
+  status          MonitoringStatus @default(ACTIVE)
+  startedAt       DateTime         @default(now())
   lateEntryReason String?
-  endedAt       DateTime?
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  endedAt         DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   patient   Patient            @relation(fields: [patientId], references: [id])
   createdBy User?              @relation("MonitoringSheetCreator", fields: [createdById], references: [id])
@@ -878,26 +963,26 @@ model MonitoringSheet {
 }
 
 model MonitoringEntry {
-  id            String   @id @default(uuid()) @db.Uuid
-  sheetId       String   @db.Uuid
-  facilityId    String   @db.Uuid
-  recordedById  String?  @db.Uuid
+  id              String   @id @default(uuid()) @db.Uuid
+  sheetId         String   @db.Uuid
+  facilityId      String   @db.Uuid
+  recordedById    String?  @db.Uuid
   /// Clinical observation time. createdAt is the immutable time it reached EHR.
-  recordedAt    DateTime @default(now())
+  recordedAt      DateTime @default(now())
   lateEntryReason String?
   // Values keyed by the parent sheet's field definitions.
-  values        Json     @default("{}")
+  values          Json     @default("{}")
   // How far outside its goal band each numeric value sits, keyed the same way:
   // { bgl: { deviation: 60, severity: 'CRITICAL_HIGH' } }. Computed on save so
   // the chart, the colour coding and the alert all read one agreed number
   // rather than each recomputing it and disagreeing at the boundary.
-  deviations    Json     @default("{}")
-  intakeMl      Float?
-  outputMl      Float?
-  attachmentUrl String?
-  isAbnormal    Boolean  @default(false)
-  notes         String?
-  createdAt     DateTime @default(now())
+  deviations      Json     @default("{}")
+  intakeMl        Float?
+  outputMl        Float?
+  attachmentUrl   String?
+  isAbnormal      Boolean  @default(false)
+  notes           String?
+  createdAt       DateTime @default(now())
 
   sheet      MonitoringSheet    @relation(fields: [sheetId], references: [id], onDelete: Cascade)
   recordedBy User?              @relation("MonitoringEntryRecorder", fields: [recordedById], references: [id])
@@ -1202,21 +1287,21 @@ model DrugCatalogue {
 /// Repeats and partial fills remain separate events instead of overwriting the
 /// original prescription or pretending every prescription was filled once.
 model Dispense {
-  id                String   @id @default(uuid()) @db.Uuid
-  facilityId        String   @db.Uuid
-  prescriptionId    String   @db.Uuid
-  patientId         String   @db.Uuid
-  drugCatalogueId   String?  @db.Uuid
-  quantity          Float
-  unit              String?
-  unitPrice         Decimal  @default(0) @db.Decimal(12, 2)
-  amount            Decimal  @default(0) @db.Decimal(12, 2)
-  dispensedById     String   @db.Uuid
-  notes             String?
-  dispensedAt       DateTime @default(now())
-  createdAt         DateTime @default(now())
+  id              String   @id @default(uuid()) @db.Uuid
+  facilityId      String   @db.Uuid
+  prescriptionId  String   @db.Uuid
+  patientId       String   @db.Uuid
+  drugCatalogueId String?  @db.Uuid
+  quantity        Float
+  unit            String?
+  unitPrice       Decimal  @default(0) @db.Decimal(12, 2)
+  amount          Decimal  @default(0) @db.Decimal(12, 2)
+  dispensedById   String   @db.Uuid
+  notes           String?
+  dispensedAt     DateTime @default(now())
+  createdAt       DateTime @default(now())
 
-  prescription  Prescription  @relation(fields: [prescriptionId], references: [id])
+  prescription  Prescription   @relation(fields: [prescriptionId], references: [id])
   drugCatalogue DrugCatalogue? @relation(fields: [drugCatalogueId], references: [id])
 
   @@index([facilityId, dispensedAt])

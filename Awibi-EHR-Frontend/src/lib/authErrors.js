@@ -16,7 +16,7 @@ const CONNECTION_MARKERS = [
  * credentials. Preserve structured API errors, but name connectivity and
  * server failures explicitly.
  */
-export function normalizeAuthError(err, fallback = 'Login failed') {
+export function normalizeAuthError(err, fallback = 'Could not sign in') {
   const data = err?.response?.data;
   if (data && typeof data === 'object' && !Array.isArray(data)) {
     return data.error ? data : { ...data, error: fallback };
@@ -39,7 +39,7 @@ export function normalizeAuthError(err, fallback = 'Login failed') {
 
   if (status >= 500) {
     return {
-      error: `The authentication service failed (HTTP ${status}). Try again; for local use, confirm the API is running on port 8000.`,
+      error: `Could not sign in (HTTP ${status}). For local use, check that the server is running on port 8000.`,
       code: 'AUTH_SERVICE_ERROR',
       status,
     };

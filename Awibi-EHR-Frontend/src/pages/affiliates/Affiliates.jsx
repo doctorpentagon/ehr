@@ -31,7 +31,7 @@ export default function Affiliates() {
   const { mutate: del } = useMutation({
     mutationFn: id => api.delete(`/affiliates/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['affiliates'] }); toast.success('Affiliate removed'); },
-    onError: () => toast.error('Failed to delete'),
+    onError: () => toast.error('Could not remove the affiliate'),
   });
 
   return (
@@ -154,7 +154,7 @@ function AffiliateModal({ open, onClose, affiliate }) {
       toast.success(isEdit ? 'Affiliate updated' : 'Affiliate added');
       onClose();
     },
-    onError: () => toast.error('Failed to save'),
+    onError: () => toast.error('Could not save the affiliate'),
   });
 
   return (

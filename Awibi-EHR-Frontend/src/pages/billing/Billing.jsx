@@ -188,7 +188,7 @@ function PayModal({ invoice, onClose }) {
       toast.success('Invoice marked as paid (cash)');
       onClose();
     } catch {
-      toast.error('Failed to update');
+      toast.error('Could not update the invoice');
     } finally {
       setLoading(false);
     }

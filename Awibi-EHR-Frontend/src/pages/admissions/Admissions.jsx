@@ -61,7 +61,7 @@ export default function Admissions() {
       toast.success('Patient discharged');
       setDischargeId(null);
     },
-    onError: () => toast.error('Discharge failed'),
+    onError: () => toast.error('Could not discharge the patient'),
   });
 
   return (
@@ -303,7 +303,7 @@ function AdmitModal({ open, onClose, beds, request }) {
       setForm({ patientUpid: '', bedId: '', diagnosis: '', notes: '' });
       setPatient(null);
     },
-    onError: err => toast.error(err.response?.data?.error || 'Admission failed'),
+    onError: err => toast.error(err.response?.data?.error || 'Could not admit the patient'),
   });
 
   return (

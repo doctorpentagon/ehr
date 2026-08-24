@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
-import { Plus, Activity, Search, X, ClipboardPlus, ArrowRight, Loader2 } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Plus, Activity, Search, X, ClipboardPlus, ArrowRight, Loader2, Pill } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import api from '../../lib/api';
@@ -13,6 +13,7 @@ import PatientPicker from '../../components/clinical/PatientPicker';
 import ClinicalAttribution, { professionalName } from '../../components/clinical/ClinicalAttribution';
 import ClinicalEventTime from '../../components/clinical/ClinicalEventTime';
 import { useSelector } from 'react-redux';
+import DrugChart from './DrugChart';
 
 const STATUS_STYLES = {
   ACTIVE:    'bg-green-50 text-green-700 border-green-200',
@@ -21,13 +22,31 @@ const STATUS_STYLES = {
   CANCELLED: 'bg-red-50 text-red-700 border-red-200',
 };
 
+function MonitoringTabs({ active, onChange, showMedication }) {
+  return (
+    <div className="inline-flex w-full rounded-xl border border-gray-200 bg-white p-1 sm:w-auto" aria-label="Monitoring views">
+      <button type="button" onClick={() => onChange('observations')}
+        className={`flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold sm:flex-none ${active === 'observations' ? 'bg-[#0B1F66] text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
+        <Activity size={16} /> Observation charts
+      </button>
+      {showMedication && (
+        <button type="button" onClick={() => onChange('medications')}
+          className={`flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold sm:flex-none ${active === 'medications' ? 'bg-[#0B1F66] text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
+          <Pill size={16} /> Medication monitoring
+        </button>
+      )}
+    </div>
+  );
+}
+
 function NewSheetModal({ open, onClose }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const user = useSelector(s => s.auth?.user);
   const [patientId, setPatientId] = useState('');
   const [type, setType] = useState('');
   const [customType, setCustomType] = useState('');
-  const [customFields, setCustomFields] = useState([{ key: '', label: '', unit: '', kind: 'number' }]);
+  const [customFields, setCustomFields] = useState([{ key: '', label: '', unit: '', kind: 'number', goalMin: '', goalMax: '', criticalLow: '', criticalHigh: '' }]);
   const [targetValue, setTargetValue] = useState('');
   const [frequencyMins, setFrequencyMins] = useState('');
   const [instructions, setInstructions] = useState('');
@@ -46,18 +65,19 @@ function NewSheetModal({ open, onClose }) {
 
   const { mutate, isPending } = useMutation({
     mutationFn: (body) => api.post('/nursing/monitoring-sheets', body).then(r => r.data),
-    onSuccess: () => {
+    onSuccess: (sheet) => {
       qc.invalidateQueries({ queryKey: ['monitoring-sheets'] });
-      toast.success('Monitoring sheet created');
+      toast.success('Monitoring started');
       reset();
       onClose();
+      navigate(`/dashboard/nursing/sheet/${sheet.id}`);
     },
     onError: (e) => toast.error(e?.response?.data?.error || 'Could not create monitoring sheet'),
   });
 
   function reset() {
     setPatientId(''); setType(''); setCustomType('');
-    setCustomFields([{ key: '', label: '', unit: '', kind: 'number' }]);
+    setCustomFields([{ key: '', label: '', unit: '', kind: 'number', goalMin: '', goalMax: '', criticalLow: '', criticalHigh: '' }]);
     setTargetValue(''); setFrequencyMins(''); setInstructions('');
     setRetrospective(false); setStartedAt(''); setLateEntryReason('');
   }
@@ -81,6 +101,12 @@ function NewSheetModal({ open, onClose }) {
           label: f.label.trim(),
           unit: f.unit.trim() || undefined,
           kind: f.kind,
+          ...(f.kind === 'number' ? {
+            goalMin: f.goalMin === '' ? undefined : Number(f.goalMin),
+            goalMax: f.goalMax === '' ? undefined : Number(f.goalMax),
+            criticalLow: f.criticalLow === '' ? undefined : Number(f.criticalLow),
+            criticalHigh: f.criticalHigh === '' ? undefined : Number(f.criticalHigh),
+          } : {}),
         }));
       if (!fields.length) return toast.error('Add at least one field to your custom sheet');
       if (!customType.trim()) return toast.error('Name your custom monitoring');
@@ -97,7 +123,7 @@ function NewSheetModal({ open, onClose }) {
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" onClick={onClose}>
       <div className="bg-white w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="sticky top-0 bg-white border-b border-gray-200 px-5 py-4 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-gray-900">New monitoring sheet</h2>
+          <h2 className="text-lg font-bold text-gray-900">Start monitoring</h2>
           <button onClick={onClose} aria-label="Close" className="w-11 h-11 -mr-2 flex items-center justify-center rounded-lg hover:bg-gray-100">
             <X size={20} />
           </button>
@@ -161,24 +187,38 @@ function NewSheetModal({ open, onClose }) {
                 <span className="block text-sm font-medium text-gray-700 mb-1.5">What will you record each time?</span>
                 <div className="space-y-2">
                   {customFields.map((f, i) => (
-                    <div key={i} className="flex flex-col sm:flex-row gap-2">
-                      <input value={f.label} placeholder="Label e.g. Drainage volume"
-                        onChange={e => setCustomFields(cf => cf.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
-                        className="flex-1 min-h-[48px] px-3 border border-gray-300 rounded-lg text-sm" />
-                      <input value={f.unit} placeholder="Unit"
-                        onChange={e => setCustomFields(cf => cf.map((x, j) => j === i ? { ...x, unit: e.target.value } : x))}
-                        className="sm:w-24 min-h-[48px] px-3 border border-gray-300 rounded-lg text-sm" />
-                      <select value={f.kind} aria-label="Field type"
-                        onChange={e => setCustomFields(cf => cf.map((x, j) => j === i ? { ...x, kind: e.target.value } : x))}
-                        className="sm:w-32 min-h-[48px] px-2 border border-gray-300 rounded-lg text-sm bg-white">
-                        <option value="number">Number</option>
-                        <option value="text">Text</option>
-                        <option value="boolean">Yes/No</option>
-                      </select>
+                    <div key={i} className="rounded-lg border border-gray-200 bg-white p-3 space-y-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-[1fr_7rem_8rem] gap-2">
+                        <input value={f.label} placeholder="Measurement, e.g. HbA1c"
+                          onChange={e => setCustomFields(cf => cf.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
+                          className="min-h-[44px] px-3 border border-gray-300 rounded-lg text-sm" />
+                        <input value={f.unit} placeholder="Unit, e.g. %"
+                          onChange={e => setCustomFields(cf => cf.map((x, j) => j === i ? { ...x, unit: e.target.value } : x))}
+                          className="min-h-[44px] px-3 border border-gray-300 rounded-lg text-sm" />
+                        <select value={f.kind} aria-label="Field type"
+                          onChange={e => setCustomFields(cf => cf.map((x, j) => j === i ? { ...x, kind: e.target.value } : x))}
+                          className="min-h-[44px] px-2 border border-gray-300 rounded-lg text-sm bg-white">
+                          <option value="number">Number / chart</option>
+                          <option value="text">Text</option>
+                          <option value="boolean">Yes/No</option>
+                        </select>
+                      </div>
+                      {f.kind === 'number' && (
+                        <div>
+                          <div className="mb-1 text-xs font-medium text-gray-600">Goal/reference band and optional critical limits</div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            {[['goalMin', 'Goal min'], ['goalMax', 'Goal max'], ['criticalLow', 'Critical low'], ['criticalHigh', 'Critical high']].map(([key, label]) => (
+                              <input key={key} type="number" step="any" value={f[key]} placeholder={label} aria-label={`${f.label || `Field ${i + 1}`} ${label}`}
+                                onChange={e => setCustomFields(cf => cf.map((x, j) => j === i ? { ...x, [key]: e.target.value } : x))}
+                                className="min-h-[40px] px-2 border border-gray-300 rounded-lg text-xs" />
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
-                <button type="button" onClick={() => setCustomFields(cf => [...cf, { key: '', label: '', unit: '', kind: 'number' }])}
+                <button type="button" onClick={() => setCustomFields(cf => [...cf, { key: '', label: '', unit: '', kind: 'number', goalMin: '', goalMax: '', criticalLow: '', criticalHigh: '' }])}
                   className="mt-2 text-sm text-[#2D5BFF] font-medium min-h-[44px]">+ Add another field</button>
               </div>
             </div>
@@ -212,7 +252,7 @@ function NewSheetModal({ open, onClose }) {
           <button onClick={onClose} className="flex-1 min-h-[48px] border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50">Cancel</button>
           <button onClick={submit} disabled={isPending}
             className="flex-1 min-h-[48px] bg-[#2D5BFF] text-white rounded-lg text-sm font-medium hover:bg-[#1a45e0] disabled:opacity-50">
-            {isPending ? 'Creating…' : 'Create sheet'}
+            {isPending ? 'Starting…' : 'Start monitoring'}
           </button>
         </div>
       </div>
@@ -222,17 +262,38 @@ function NewSheetModal({ open, onClose }) {
 
 export default function Monitoring() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
   const [status, setStatus] = useState('ACTIVE');
   const [search, setSearch] = useState('');
+  const [patientFilterId, setPatientFilterId] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const user = useSelector(s => s.auth?.user);
   const mayWrite = can(user?.role, user?.subRole, 'monitoring_write');
+  const mayOrder = can(user?.role, user?.subRole, 'prescriptions_write');
+  const mayViewMedication = can(user?.role, user?.subRole, 'drug_admin');
+  const activeView = searchParams.get('view') === 'medications' && mayViewMedication ? 'medications' : 'observations';
+
+  function changeView(view) {
+    const next = new URLSearchParams(searchParams);
+    if (view === 'medications') next.set('view', 'medications');
+    else next.delete('view');
+    setSearchParams(next);
+  }
 
   const { data, isLoading } = useQuery({
-    queryKey: ['monitoring-sheets', status],
-    queryFn: () => api.get('/nursing/monitoring-sheets', { params: { status: status || undefined, limit: 50 } }).then(r => r.data),
+    queryKey: ['monitoring-sheets', status, patientFilterId],
+    queryFn: () => api.get('/nursing/monitoring-sheets', {
+      params: { status: status || undefined, patientId: patientFilterId || undefined, limit: 50 },
+    }).then(r => r.data),
   });
+
+  const { data: showcaseData } = useQuery({
+    queryKey: ['monitoring-showcase'],
+    queryFn: () => api.get('/nursing/monitoring-sheets', { params: { status: 'ACTIVE', limit: 100 } }).then(r => r.data),
+    staleTime: 60_000,
+  });
+  const showcaseSheet = (showcaseData?.sheets || []).find(sheet => sheet.patient?.mrn === 'DEMO-SAMPLE-001' && sheet.title?.startsWith('Sample:'));
 
   const { data: requestData } = useQuery({
     queryKey: ['monitoring-requests'],
@@ -241,6 +302,14 @@ export default function Monitoring() {
     refetchInterval: 30_000,
   });
   const requests = requestData?.requests || [];
+  const filteredRequests = requests.filter(request => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return request.orderName?.toLowerCase().includes(q)
+      || request.goal?.toLowerCase().includes(q)
+      || `${request.patient?.firstName || ''} ${request.patient?.lastName || ''}`.toLowerCase().includes(q)
+      || request.patient?.mrn?.toLowerCase().includes(q);
+  });
 
   const openOrderedChart = useMutation({
     mutationFn: request => api.post(`/nursing/monitoring-requests/${request.orderId}/initiate`, {
@@ -267,34 +336,118 @@ export default function Monitoring() {
     return name.includes(q) || (s.title || '').toLowerCase().includes(q) || (s.patient?.universalPatientId || '').toLowerCase().includes(q);
   });
 
+  if (activeView === 'medications') {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Monitoring</h1>
+          <p className="text-sm text-gray-500">Patient observations and medicines given</p>
+        </div>
+        <MonitoringTabs active={activeView} onChange={changeView} showMedication={mayViewMedication} />
+        <DrugChart embedded />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Monitoring</h1>
-          <p className="text-sm text-gray-500">Catheter, fluids, transfusion, drains, neuro observation and more</p>
+          <p className="text-sm text-gray-500">
+            {mayWrite && mayOrder
+              ? 'Start monitoring, send orders and review patient trends.'
+              : mayWrite
+                ? 'Start a chart or open a doctor’s order.'
+              : mayOrder
+                ? 'Send monitoring orders and review patient trends.'
+                : 'Review patient observations and trends.'}
+          </p>
+          <span className="mt-1 inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-600">
+            {mayWrite && mayOrder ? 'Facility Admin view' : mayWrite ? 'Nurse view' : mayOrder ? 'Doctor view' : 'Read-only view'}
+          </span>
         </div>
-        {mayWrite && (
-          <button onClick={() => setModalOpen(true)}
-            className="flex items-center justify-center gap-2 px-4 min-h-[48px] bg-[#2D5BFF] text-white rounded-lg text-sm font-medium hover:bg-[#1a45e0]">
-            <Plus size={16} /> New monitoring
-          </button>
-        )}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {mayOrder && (
+            <button onClick={() => navigate('/dashboard/orders?mode=NURSING')}
+              className="flex items-center justify-center gap-2 px-4 min-h-[48px] border border-[#2D5BFF] bg-white text-[#2D5BFF] rounded-lg text-sm font-medium hover:bg-blue-50">
+              <ClipboardPlus size={16} /> Create monitoring order
+            </button>
+          )}
+          {mayWrite && (
+            <button onClick={() => setModalOpen(true)}
+              className="flex items-center justify-center gap-2 px-4 min-h-[48px] bg-[#2D5BFF] text-white rounded-lg text-sm font-medium hover:bg-[#1a45e0]">
+              <Plus size={16} /> Start monitoring
+            </button>
+          )}
+        </div>
       </div>
 
-      {mayWrite && requests.length > 0 && (
+      <MonitoringTabs active={activeView} onChange={changeView} showMedication={mayViewMedication} />
+
+      {showcaseSheet && (
+        <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm font-bold text-emerald-950">End-to-end monitoring sample</div>
+              <p className="mt-1 text-xs text-emerald-800">
+                {showcaseSheet.patient.firstName} {showcaseSheet.patient.lastName} · {showcaseSheet.patient.universalPatientId} · doctor order, five timed observations, multimodal entry and visual trend
+              </p>
+            </div>
+            <button type="button" onClick={() => navigate(`/dashboard/nursing/sheet/${showcaseSheet.id}`)}
+              className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800">
+              Open sample <ArrowRight size={16} />
+            </button>
+          </div>
+        </section>
+      )}
+
+      <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-4">
+        <PatientPicker
+          id="monitoring-patient-filter"
+          label="Patient ID / hospital record"
+          value={patientFilterId}
+          onChange={setPatientFilterId}
+          placeholder="Search Health ID, hospital number, phone or name…"
+        />
+        {patientFilterId && (
+          <button
+            type="button"
+            onClick={() => navigate(`/dashboard/nursing/patient/${patientFilterId}`)}
+            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-[#2D5BFF] px-4 text-sm font-semibold text-[#2D5BFF] hover:bg-blue-50 sm:w-auto"
+          >
+            <Activity size={16} /> View patient trends
+          </button>
+        )}
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="relative flex-1">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter by chart name or order…" aria-label="Filter monitoring sheets and orders"
+              className="w-full pl-9 pr-4 min-h-[48px] border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#2D5BFF]/30" />
+          </div>
+          <select value={status} onChange={e => setStatus(e.target.value)} aria-label="Filter by status"
+            className="px-3 min-h-[48px] border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#2D5BFF]/30">
+            <option value="ACTIVE">Active</option>
+            <option value="PAUSED">Paused</option>
+            <option value="COMPLETED">Completed</option>
+            <option value="">All</option>
+          </select>
+        </div>
+      </div>
+
+      {mayWrite && filteredRequests.length > 0 && (
         <section className="rounded-xl border border-blue-200 bg-blue-50/50 p-4" aria-labelledby="ordered-monitoring-title">
           <div className="flex items-start gap-3">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-[#2D5BFF]">
               <ClipboardPlus size={19} />
             </div>
             <div>
-              <h2 id="ordered-monitoring-title" className="text-sm font-semibold text-gray-900">Ordered monitoring awaiting a chart</h2>
-              <p className="mt-0.5 text-xs text-gray-600">Open these first so the bedside record stays linked to the doctor&rsquo;s instruction.</p>
+              <h2 id="ordered-monitoring-title" className="text-sm font-semibold text-gray-900">Orders waiting to be started</h2>
+              <p className="mt-0.5 text-xs text-gray-600">Open an order to start the patient&rsquo;s chart.</p>
             </div>
           </div>
           <div className="mt-3 grid gap-2 lg:grid-cols-2">
-            {requests.map(request => (
+            {filteredRequests.map(request => (
               <article key={request.orderId} className="rounded-lg border border-blue-100 bg-white p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -323,28 +476,13 @@ export default function Monitoring() {
         </section>
       )}
 
-      <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col sm:flex-row gap-3">
-        <div className="flex-1 relative">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search patient or sheet…" aria-label="Search monitoring sheets"
-            className="w-full pl-9 pr-4 min-h-[48px] border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#2D5BFF]/30" />
-        </div>
-        <select value={status} onChange={e => setStatus(e.target.value)} aria-label="Filter by status"
-          className="px-3 min-h-[48px] border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#2D5BFF]/30">
-          <option value="ACTIVE">Active</option>
-          <option value="PAUSED">Paused</option>
-          <option value="COMPLETED">Completed</option>
-          <option value="">All</option>
-        </select>
-      </div>
-
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         {isLoading ? (
           <div className="py-16 flex justify-center"><Spinner size="lg" /></div>
         ) : sheets.length === 0 ? (
-          <EmptyState icon={Activity} title="No monitoring sheets"
-            description={mayWrite ? 'Create a sheet to start recording catheter output, fluids, transfusion observations and more.' : 'No active monitoring for this facility.'}
-            action={mayWrite ? <button onClick={() => setModalOpen(true)} className="px-4 py-2 bg-[#2D5BFF] text-white rounded-lg text-sm font-medium">New monitoring</button> : null} />
+          <EmptyState icon={Activity} title="No monitoring yet"
+            description={mayWrite ? 'Start a chart for this patient.' : 'No active monitoring.'}
+            action={mayWrite ? <button onClick={() => setModalOpen(true)} className="px-4 py-2 bg-[#2D5BFF] text-white rounded-lg text-sm font-medium">Start monitoring</button> : null} />
         ) : (
           <div className="divide-y divide-gray-100">
             {sheets.map(s => (

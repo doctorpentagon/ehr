@@ -13,7 +13,9 @@ const { zScores, referenceDataAvailable } = require('../utils/growth');
 
 // Read access: any role that can see ward documentation (incl. the facility owner).
 const read = [authenticate, tenant, requirePermission('monitoring')];
-// Write access: clinical roles only — the owner sees but does not author.
+// Write access: the responsible nursing role and the facility administrator.
+// Audit rows always retain the real user and role, so an administrator never
+// appears as the bedside nurse who would ordinarily perform the action.
 const writeMonitoring = [authenticate, tenant, requirePermission('monitoring_write')];
 // Doctors hold this but not `monitoring_write`: they comment on the nursing
 // record and ask for corrections, they do not author the observations.
@@ -128,6 +130,21 @@ router.get('/monitoring-sheets/:id', read, async (req, res, next) => {
     });
     if (!sheet) return res.status(404).json({ error: 'Monitoring sheet not found' });
 
+    let originatingOrder = null;
+    if (sheet.orderId) {
+      const order = await prisma.order.findFirst({
+        where: { id: sheet.orderId, facilityId: req.ctx.facilityId, patientId: sheet.patientId },
+        include: { executions: { orderBy: { executedAt: 'desc' }, take: 20 } },
+      });
+      if (order) {
+        const orderedBy = await prisma.user.findFirst({
+          where: { id: order.orderedById, facilityId: req.ctx.facilityId },
+          select: { id: true, firstName: true, lastName: true, staffId: true, role: true, subRole: true, specialty: true },
+        });
+        originatingOrder = { ...order, orderedBy };
+      }
+    }
+
     // Running intake/output balance — the reason a structured sheet beats a free log.
     const totals = sheet.entries.reduce((acc, e) => {
       acc.intakeMl += e.intakeMl || 0;
@@ -136,7 +153,7 @@ router.get('/monitoring-sheets/:id', read, async (req, res, next) => {
     }, { intakeMl: 0, outputMl: 0 });
     totals.balanceMl = Number((totals.intakeMl - totals.outputMl).toFixed(2));
 
-    res.json({ ...sheet, totals });
+    res.json({ ...sheet, totals, originatingOrder });
   } catch (e) { next(e); }
 });
 
@@ -166,9 +183,44 @@ router.post('/monitoring-sheets', writeMonitoring, async (req, res, next) => {
 
     const template = templateFor(type);
     // Caller-supplied fields win, so a nurse can shape a CUSTOM sheet freely.
-    const resolvedFields = Array.isArray(fields) && fields.length ? fields : (template?.fields || []);
+    let resolvedFields = Array.isArray(fields) && fields.length ? fields : (template?.fields || []);
     if (type === 'CUSTOM' && !resolvedFields.length) {
       return res.status(400).json({ error: 'A custom monitoring sheet needs at least one field' });
+    }
+    if (type === 'CUSTOM') {
+      if (resolvedFields.length > 20) return res.status(400).json({ error: 'A custom monitoring sheet can have at most 20 measurements' });
+      const allowedKinds = new Set(['number', 'text', 'select', 'boolean']);
+      resolvedFields = resolvedFields.map((field, index) => {
+        const label = String(field?.label || '').trim();
+        const kind = allowedKinds.has(field?.kind) ? field.kind : 'number';
+        const safe = {
+          key: String(field?.key || `field_${index + 1}`).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64),
+          label: label.slice(0, 100),
+          unit: field?.unit ? String(field.unit).trim().slice(0, 30) : undefined,
+          kind,
+          required: Boolean(field?.required),
+        };
+        if (kind === 'number') {
+          for (const band of ['goalMin', 'goalMax', 'criticalLow', 'criticalHigh']) {
+            if (field?.[band] !== undefined && field?.[band] !== '' && Number.isFinite(Number(field[band]))) {
+              safe[band] = Number(field[band]);
+            }
+          }
+        }
+        return safe;
+      });
+      if (resolvedFields.some(field => !field.label || !field.key)) {
+        return res.status(400).json({ error: 'Every custom measurement needs a label' });
+      }
+      if (new Set(resolvedFields.map(field => field.key)).size !== resolvedFields.length) {
+        return res.status(400).json({ error: 'Custom measurement keys must be unique' });
+      }
+      const invalidBand = resolvedFields.find(field => (
+        field.goalMin !== undefined && field.goalMax !== undefined && field.goalMin > field.goalMax
+      ) || (
+        field.criticalLow !== undefined && field.criticalHigh !== undefined && field.criticalLow > field.criticalHigh
+      ));
+      if (invalidBand) return res.status(400).json({ error: `${invalidBand.label} has an invalid reference or critical range` });
     }
 
     const sheet = await prisma.monitoringSheet.create({

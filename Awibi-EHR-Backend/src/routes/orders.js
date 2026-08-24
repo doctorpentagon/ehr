@@ -17,6 +17,96 @@ const catalogueWrite = [authenticate, tenant, requirePermission('settings')];
 const pharmacyRead = [authenticate, tenant, requirePermission('pharmacy')];
 const pharmacyWrite = [authenticate, tenant, requirePermission('pharmacy_write')];
 const inventoryWrite = [authenticate, tenant, requirePermission('inventory_write')];
+const medicationSafetyRead = [authenticate, tenant, requirePermission('medication_safety')];
+
+const THERAPY_PROBLEM_CATEGORIES = new Set([
+  'NEEDS_ADDITIONAL_THERAPY', 'UNNECESSARY_THERAPY', 'INEFFECTIVE_THERAPY',
+  'DOSE_TOO_LOW', 'DOSE_TOO_HIGH', 'ADVERSE_DRUG_REACTION', 'NON_ADHERENCE',
+  'DRUG_INTERACTION', 'MONITORING_REQUIRED', 'OTHER',
+]);
+const DRUG_ROUTES = new Set(['ORAL', 'IV', 'IM', 'SC', 'TOPICAL', 'RECTAL', 'INHALATION', 'SUBLINGUAL', 'OTHER']);
+
+function pharmacyInventoryPayload(body = {}, { partial = false } = {}) {
+  const text = (value) => String(value || '').trim() || null;
+  const number = (value, label, fallback) => {
+    if ((value === undefined || value === '') && partial) return undefined;
+    const parsed = value === undefined || value === '' ? fallback : Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) throw Object.assign(new Error(`${label} must be zero or more`), { status: 400 });
+    return parsed;
+  };
+  const route = body.defaultRoute === undefined && partial ? undefined : String(body.defaultRoute || 'ORAL').toUpperCase();
+  if (route !== undefined && !DRUG_ROUTES.has(route)) throw Object.assign(new Error('Choose a valid medicine route'), { status: 400 });
+  const name = body.name === undefined && partial ? undefined : text(body.name);
+  if (name === null) throw Object.assign(new Error('Medicine name is required'), { status: 400 });
+  const nextExpiryDate = body.nextExpiryDate === undefined && partial
+    ? undefined
+    : body.nextExpiryDate ? new Date(body.nextExpiryDate) : null;
+  if (nextExpiryDate && Number.isNaN(nextExpiryDate.getTime())) throw Object.assign(new Error('Enter a valid expiry date'), { status: 400 });
+  const unitPrice = number(body.unitPrice, 'unitPrice', 0);
+  const stockOnHand = number(body.stockOnHand, 'stockOnHand', 0);
+  const reorderLevel = number(body.reorderLevel, 'reorderLevel', 0);
+  return {
+    ...(name !== undefined ? { name } : {}),
+    ...(body.genericName !== undefined || !partial ? { genericName: text(body.genericName) } : {}),
+    ...(body.form !== undefined || !partial ? { form: text(body.form) } : {}),
+    ...(body.strength !== undefined || !partial ? { strength: text(body.strength) } : {}),
+    ...(route !== undefined ? { defaultRoute: route } : {}),
+    ...(body.defaultDose !== undefined || !partial ? { defaultDose: text(body.defaultDose) } : {}),
+    ...(body.defaultFrequency !== undefined || !partial ? { defaultFrequency: text(body.defaultFrequency) } : {}),
+    ...(body.category !== undefined || !partial ? { category: text(body.category) } : {}),
+    ...(unitPrice !== undefined ? { unitPrice } : {}),
+    ...(stockOnHand !== undefined ? { stockOnHand } : {}),
+    ...(reorderLevel !== undefined ? { reorderLevel } : {}),
+    ...(body.unitLabel !== undefined || !partial ? { unitLabel: text(body.unitLabel) } : {}),
+    ...(nextExpiryDate !== undefined ? { nextExpiryDate } : {}),
+    ...(body.isControlled !== undefined || !partial ? { isControlled: Boolean(body.isControlled) } : {}),
+  };
+}
+
+function medicationSafetySummary(patient, prescriptions, therapyProblems = []) {
+  const active = prescriptions.filter((item) => item.status === 'ACTIVE');
+  const warnings = [];
+  const byName = new Map();
+  for (const medicine of active) {
+    const key = String(medicine.drugName || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!key) continue;
+    if (byName.has(key)) {
+      warnings.push({
+        kind: 'POSSIBLE_DUPLICATE', severity: 'HIGH', medicines: [byName.get(key).drugName, medicine.drugName],
+        message: `Possible duplicate active therapy: ${medicine.drugName}. Confirm indication and intended regimen.`,
+      });
+    } else byName.set(key, medicine);
+  }
+  for (const allergy of patient.allergies || []) {
+    const substance = String(allergy.substance || '').trim().toLowerCase();
+    if (substance.length < 3) continue;
+    for (const medicine of active) {
+      const name = String(medicine.drugName || '').toLowerCase();
+      if (name.includes(substance) || substance.includes(name)) {
+        warnings.push({
+          kind: 'POSSIBLE_ALLERGY_MATCH', severity: allergy.severity === 'SEVERE' ? 'CRITICAL' : 'HIGH',
+          medicines: [medicine.drugName],
+          message: `${medicine.drugName} may match recorded allergy “${allergy.substance}”. Verify before supply or administration.`,
+        });
+      }
+    }
+  }
+  for (const problem of therapyProblems.filter((item) => item.status !== 'RESOLVED' && item.category === 'DRUG_INTERACTION')) {
+    warnings.push({
+      kind: 'PHARMACIST_RECORDED_INTERACTION', severity: problem.severity,
+      medicines: problem.prescription?.drugName ? [problem.prescription.drugName] : [],
+      message: problem.description,
+    });
+  }
+  return {
+    status: warnings.some((item) => item.severity === 'CRITICAL') ? 'CRITICAL'
+      : warnings.length ? 'REVIEW_REQUIRED' : 'PARTIAL_SCREEN_NO_LOCAL_FLAGS',
+    warnings,
+    scope: 'Checks active medicines against recorded allergies, duplicates and pharmacist warnings.',
+    authoritativeInteractionSourceConfigured: false,
+    limitation: 'This does not check every possible drug interaction. Confirm with an approved medicine reference.',
+  };
+}
 
 // Prisma orders enums by DECLARATION order, and NursingTaskPriority is declared
 // ROUTINE, URGENT, STAT — so `priority: 'asc'` would sink a STAT task to the
@@ -92,6 +182,7 @@ router.get('/pharmacy/queue', pharmacyRead, async (req, res, next) => {
         { patient: { is: { firstName: { contains: search, mode: 'insensitive' } } } },
         { patient: { is: { lastName: { contains: search, mode: 'insensitive' } } } },
         { patient: { is: { mrn: { contains: search, mode: 'insensitive' } } } },
+        { patient: { is: { universalPatientId: { contains: search, mode: 'insensitive' } } } },
       ];
     }
     const prescriptions = await prisma.prescription.findMany({
@@ -114,41 +205,251 @@ router.get('/pharmacy/queue', pharmacyRead, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── Clinical pharmacy: patient medication review and care plan ─────────────
+router.get('/pharmacy/patient/:patientId', pharmacyRead, async (req, res, next) => {
+  try {
+    await requireTenantPatient(req.ctx.facilityId, req.params.patientId);
+    const scope = { facilityId: req.ctx.facilityId, patientId: req.params.patientId };
+    const [patient, prescriptions, therapyProblems, carePlans] = await prisma.$transaction([
+      prisma.patient.findFirst({
+        where: { id: req.params.patientId, facilityId: req.ctx.facilityId },
+        select: {
+          id: true, firstName: true, lastName: true, universalPatientId: true, mrn: true,
+          dateOfBirth: true, gender: true, allergies: true,
+          conditions: { where: { status: { in: ['ACTIVE', 'CHRONIC'] } }, orderBy: { updatedAt: 'desc' } },
+        },
+      }),
+      prisma.prescription.findMany({
+        where: scope, orderBy: { createdAt: 'desc' },
+        include: { dispenses: { orderBy: { dispensedAt: 'desc' } } },
+      }),
+      prisma.pharmacyTherapyProblem.findMany({
+        where: scope, orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+        include: {
+          prescription: { select: { id: true, drugName: true, dosage: true, status: true } },
+          identifiedBy: { select: { id: true, firstName: true, lastName: true, staffId: true } },
+        },
+      }),
+      prisma.pharmacyCarePlan.findMany({
+        where: scope, orderBy: { createdAt: 'desc' }, take: 30,
+        include: { pharmacist: { select: { id: true, firstName: true, lastName: true, staffId: true } } },
+      }),
+    ]);
+    res.json({
+      patient, prescriptions, therapyProblems, carePlans,
+      safety: medicationSafetySummary(patient, prescriptions, therapyProblems),
+    });
+  } catch (e) { next(e); }
+});
+
+// Doctors, nurses and pharmacists may all read the same medication-safety
+// summary. Only pharmacists author DTPs and pharmaceutical care plans.
+router.get('/medication-safety/:patientId', medicationSafetyRead, async (req, res, next) => {
+  try {
+    await requireTenantPatient(req.ctx.facilityId, req.params.patientId);
+    const patient = await prisma.patient.findFirst({
+      where: { id: req.params.patientId, facilityId: req.ctx.facilityId },
+      select: { id: true, firstName: true, lastName: true, allergies: true },
+    });
+    const prescriptions = await prisma.prescription.findMany({
+      where: { patientId: req.params.patientId, facilityId: req.ctx.facilityId, status: 'ACTIVE' },
+      orderBy: { createdAt: 'desc' },
+    });
+    const therapyProblems = await prisma.pharmacyTherapyProblem.findMany({
+      where: { patientId: req.params.patientId, facilityId: req.ctx.facilityId, status: { not: 'RESOLVED' } },
+      include: { prescription: { select: { drugName: true } } },
+    });
+    res.json({ patient, safety: medicationSafetySummary(patient, prescriptions, therapyProblems) });
+  } catch (e) { next(e); }
+});
+
+router.post('/pharmacy/problems', pharmacyWrite, async (req, res, next) => {
+  try {
+    const { patientId, prescriptionId, category, problemType, severity, description, evidence, recommendation } = req.body || {};
+    if (!patientId) return res.status(400).json({ error: 'patientId is required' });
+    if (!THERAPY_PROBLEM_CATEGORIES.has(category)) return res.status(400).json({ error: 'Choose a valid Drug Therapy Problem category' });
+    if (!['ACTUAL', 'POTENTIAL'].includes(problemType)) return res.status(400).json({ error: 'problemType must be ACTUAL or POTENTIAL' });
+    if (!['LOW', 'MODERATE', 'HIGH', 'CRITICAL'].includes(severity)) return res.status(400).json({ error: 'Choose a valid severity' });
+    if (String(description || '').trim().length < 5) return res.status(400).json({ error: 'Describe the therapy problem' });
+    await requireTenantPatient(req.ctx.facilityId, patientId);
+    if (prescriptionId) {
+      const prescription = await prisma.prescription.findFirst({ where: { id: prescriptionId, patientId, facilityId: req.ctx.facilityId } });
+      if (!prescription) return res.status(404).json({ error: 'Linked prescription not found for this patient' });
+    }
+    const problem = await prisma.pharmacyTherapyProblem.create({
+      data: {
+        facilityId: req.ctx.facilityId, patientId, prescriptionId: prescriptionId || null,
+        identifiedById: req.ctx.userId, category, problemType, severity,
+        description: String(description).trim(), evidence: String(evidence || '').trim() || null,
+        recommendation: String(recommendation || '').trim() || null,
+      },
+    });
+    audit(req, 'pharmacy.dtp.create', 'PharmacyTherapyProblem', problem.id, `${severity} ${category}`);
+    res.status(201).json(problem);
+  } catch (e) { next(e); }
+});
+
+router.put('/pharmacy/problems/:id/status', pharmacyWrite, async (req, res, next) => {
+  try {
+    const problem = await prisma.pharmacyTherapyProblem.findFirst({ where: { id: req.params.id, facilityId: req.ctx.facilityId } });
+    if (!problem) return res.status(404).json({ error: 'Drug Therapy Problem not found' });
+    const { status, resolution } = req.body || {};
+    if (!['OPEN', 'IN_REVIEW', 'RESOLVED'].includes(status)) return res.status(400).json({ error: 'Invalid problem status' });
+    if (status === 'RESOLVED' && String(resolution || '').trim().length < 3) return res.status(400).json({ error: 'Record the resolution before closure' });
+    const saved = await prisma.pharmacyTherapyProblem.update({
+      where: { id: problem.id },
+      data: {
+        status, resolution: String(resolution || '').trim() || problem.resolution,
+        resolvedAt: status === 'RESOLVED' ? new Date() : null,
+      },
+    });
+    audit(req, 'pharmacy.dtp.status', 'PharmacyTherapyProblem', saved.id, `${problem.status} to ${status}`);
+    res.json(saved);
+  } catch (e) { next(e); }
+});
+
+router.post('/pharmacy/care-plans', pharmacyWrite, async (req, res, next) => {
+  try {
+    const {
+      patientId, documentationFormat = 'SOAP', subjective, objective, assessment, plan,
+      coreCondition, coreOutcomes, coreRegimen, coreEvaluation, primeProblems,
+      farmFindings, farmAssessment, farmResolution, farmMonitoring, patientNeeds,
+      therapyGoals, interventions, followUpPlan, adherence, followUpAt,
+    } = req.body || {};
+    if (!patientId) return res.status(400).json({ error: 'patientId is required' });
+    if (!['SOAP', 'CORE_PRIME_FARM'].includes(documentationFormat)) {
+      return res.status(400).json({ error: 'Choose SOAP or CORE–PRIME–FARM documentation' });
+    }
+    await requireTenantPatient(req.ctx.facilityId, patientId);
+    const meaningful = [
+      subjective, objective, assessment, plan,
+      coreCondition, coreOutcomes, coreRegimen, coreEvaluation, primeProblems,
+      farmFindings, farmAssessment, farmResolution, farmMonitoring,
+      patientNeeds, therapyGoals, interventions, followUpPlan,
+    ]
+      .some((value) => String(value || '').trim().length >= 3);
+    if (!meaningful) return res.status(400).json({ error: 'Enter at least one meaningful SOAP or pharmaceutical-care section' });
+    const carePlan = await prisma.pharmacyCarePlan.create({
+      data: {
+        facilityId: req.ctx.facilityId, patientId, pharmacistId: req.ctx.userId,
+        documentationFormat,
+        subjective: String(subjective || '').trim() || null,
+        objective: String(objective || '').trim() || null,
+        assessment: String(assessment || '').trim() || null,
+        plan: String(plan || '').trim() || null,
+        coreCondition: String(coreCondition || '').trim() || null,
+        coreOutcomes: String(coreOutcomes || '').trim() || null,
+        coreRegimen: String(coreRegimen || '').trim() || null,
+        coreEvaluation: String(coreEvaluation || '').trim() || null,
+        primeProblems: String(primeProblems || '').trim() || null,
+        farmFindings: String(farmFindings || '').trim() || null,
+        farmAssessment: String(farmAssessment || '').trim() || null,
+        farmResolution: String(farmResolution || '').trim() || null,
+        farmMonitoring: String(farmMonitoring || '').trim() || null,
+        patientNeeds: String(patientNeeds || '').trim() || null,
+        therapyGoals: String(therapyGoals || '').trim() || null,
+        interventions: String(interventions || '').trim() || null,
+        followUpPlan: String(followUpPlan || '').trim() || null,
+        adherence: String(adherence || '').trim() || null,
+        followUpAt: followUpAt ? new Date(followUpAt) : null,
+      },
+    });
+    audit(req, 'pharmacy.care-plan.create', 'PharmacyCarePlan', carePlan.id, 'Draft pharmaceutical care plan');
+    res.status(201).json(carePlan);
+  } catch (e) { next(e); }
+});
+
+router.post('/pharmacy/care-plans/:id/sign', pharmacyWrite, async (req, res, next) => {
+  try {
+    const carePlan = await prisma.pharmacyCarePlan.findFirst({ where: { id: req.params.id, facilityId: req.ctx.facilityId } });
+    if (!carePlan) return res.status(404).json({ error: 'Pharmaceutical care plan not found' });
+    if (carePlan.status === 'SIGNED') return res.status(409).json({ error: 'This care plan is already signed' });
+    if (carePlan.pharmacistId !== req.ctx.userId) return res.status(403).json({ error: 'Only the author can sign this care plan' });
+    const signed = await prisma.pharmacyCarePlan.update({
+      where: { id: carePlan.id }, data: { status: 'SIGNED', signedAt: new Date() },
+    });
+    audit(req, 'pharmacy.care-plan.sign', 'PharmacyCarePlan', signed.id, 'Signed pharmaceutical care plan');
+    res.json(signed);
+  } catch (e) { next(e); }
+});
+
 router.get('/pharmacy/inventory', pharmacyRead, async (req, res, next) => {
   try {
-    const { search } = req.query;
-    const where = { facilityId: req.ctx.facilityId, isActive: true };
+    const { search, stockStatus = 'ACTIVE' } = req.query;
+    const where = { facilityId: req.ctx.facilityId };
+    if (stockStatus === 'ARCHIVED') where.isActive = false;
+    else if (stockStatus !== 'ALL') where.isActive = true;
     if (search) where.OR = [
       { name: { contains: search, mode: 'insensitive' } },
       { genericName: { contains: search, mode: 'insensitive' } },
       { category: { contains: search, mode: 'insensitive' } },
     ];
-    const items = await prisma.drugCatalogue.findMany({ where, orderBy: [{ name: 'asc' }], take: 300 });
-    const lowStock = items.filter((item) => item.stockOnHand <= item.reorderLevel).length;
-    const expiringSoon = items.filter((item) => item.nextExpiryDate && new Date(item.nextExpiryDate).getTime() <= Date.now() + 90 * 86400000).length;
-    res.json({ items, counts: { total: items.length, lowStock, expiringSoon } });
+    const [matching, allItems] = await prisma.$transaction([
+      prisma.drugCatalogue.findMany({ where, orderBy: [{ name: 'asc' }] }),
+      prisma.drugCatalogue.findMany({ where: { facilityId: req.ctx.facilityId } }),
+    ]);
+    const items = matching.filter((item) => {
+      if (stockStatus === 'LOW') return item.stockOnHand > 0 && item.stockOnHand <= item.reorderLevel;
+      if (stockStatus === 'OUT') return item.stockOnHand <= 0;
+      return true;
+    }).slice(0, 300);
+    const active = allItems.filter((item) => item.isActive);
+    const lowStock = active.filter((item) => item.stockOnHand > 0 && item.stockOnHand <= item.reorderLevel).length;
+    const outOfStock = active.filter((item) => item.stockOnHand <= 0).length;
+    const expiringSoon = active.filter((item) => item.nextExpiryDate && new Date(item.nextExpiryDate).getTime() <= Date.now() + 90 * 86400000).length;
+    res.json({ items, counts: { total: active.length, lowStock, outOfStock, expiringSoon, archived: allItems.length - active.length } });
   } catch (e) { next(e); }
+});
+
+router.post('/pharmacy/inventory', inventoryWrite, async (req, res, next) => {
+  try {
+    const data = pharmacyInventoryPayload(req.body);
+    const item = await prisma.drugCatalogue.create({ data: { facilityId: req.ctx.facilityId, ...data } });
+    audit(req, 'pharmacy.inventory.create', 'DrugCatalogue', item.id, `Added ${item.name} to facility stock`);
+    res.status(201).json(item);
+  } catch (e) {
+    if (e.code === 'P2002') return res.status(409).json({ error: 'That medicine and strength already exists in this facility' });
+    next(e);
+  }
 });
 
 router.put('/pharmacy/inventory/:id', inventoryWrite, async (req, res, next) => {
   try {
     const existing = await prisma.drugCatalogue.findFirst({ where: { id: req.params.id, facilityId: req.ctx.facilityId } });
     if (!existing) return res.status(404).json({ error: 'Medicine not found in this facility formulary' });
-    const { stockOnHand, reorderLevel, unitLabel, unitPrice, nextExpiryDate } = req.body || {};
-    const stock = Number(stockOnHand);
-    const reorder = Number(reorderLevel);
-    if (!Number.isFinite(stock) || stock < 0) return res.status(400).json({ error: 'stockOnHand must be zero or more' });
-    if (!Number.isFinite(reorder) || reorder < 0) return res.status(400).json({ error: 'reorderLevel must be zero or more' });
+    const data = pharmacyInventoryPayload(req.body, { partial: true });
     const item = await prisma.drugCatalogue.update({
       where: { id: existing.id },
-      data: {
-        stockOnHand: stock, reorderLevel: reorder,
-        unitLabel: String(unitLabel || '').trim() || null,
-        ...(unitPrice !== undefined ? { unitPrice: Number(unitPrice) } : {}),
-        nextExpiryDate: nextExpiryDate ? new Date(nextExpiryDate) : null,
-      },
+      data,
     });
-    audit(req, 'pharmacy.inventory.update', 'DrugCatalogue', item.id, `Stock set to ${stock} ${item.unitLabel || 'units'}`);
+    audit(req, 'pharmacy.inventory.update', 'DrugCatalogue', item.id, `Updated ${item.name}; stock ${item.stockOnHand} ${item.unitLabel || 'units'}`);
+    res.json(item);
+  } catch (e) {
+    if (e.code === 'P2002') return res.status(409).json({ error: 'That medicine and strength already exists in this facility' });
+    next(e);
+  }
+});
+
+router.delete('/pharmacy/inventory/:id', inventoryWrite, async (req, res, next) => {
+  try {
+    const reason = String(req.body?.reason || '').trim();
+    if (reason.length < 3) return res.status(400).json({ error: 'Enter a reason for archiving this stock item' });
+    const existing = await prisma.drugCatalogue.findFirst({ where: { id: req.params.id, facilityId: req.ctx.facilityId } });
+    if (!existing) return res.status(404).json({ error: 'Medicine not found in this facility formulary' });
+    if (!existing.isActive) return res.status(409).json({ error: 'This stock item is already archived' });
+    const item = await prisma.drugCatalogue.update({ where: { id: existing.id }, data: { isActive: false } });
+    audit(req, 'pharmacy.inventory.archive', 'DrugCatalogue', item.id, reason);
+    res.json(item);
+  } catch (e) { next(e); }
+});
+
+router.post('/pharmacy/inventory/:id/restore', inventoryWrite, async (req, res, next) => {
+  try {
+    const existing = await prisma.drugCatalogue.findFirst({ where: { id: req.params.id, facilityId: req.ctx.facilityId } });
+    if (!existing) return res.status(404).json({ error: 'Archived medicine not found in this facility' });
+    if (existing.isActive) return res.status(409).json({ error: 'This stock item is already active' });
+    const item = await prisma.drugCatalogue.update({ where: { id: existing.id }, data: { isActive: true } });
+    audit(req, 'pharmacy.inventory.restore', 'DrugCatalogue', item.id, 'Restored facility stock item');
     res.json(item);
   } catch (e) { next(e); }
 });

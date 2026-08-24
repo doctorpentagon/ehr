@@ -1,12 +1,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { can, getPermissions } = require('../src/utils/permissions');
 const { generateUPID, generateStaffId } = require('../src/utils/upid');
 const { escapeHtml, safeSubject } = require('../src/utils/mailer');
 const { normalizeVitals } = require('../src/utils/vitals');
 const { generateTemporaryPassword, isStrongPassword } = require('../src/utils/passwords');
 const { normalisePhone, validateDateOfBirth, ageInYears } = require('../src/utils/patientValidation');
-const { deviationFor, computeDeviations, slidingScaleFor, ivFluidStatus } = require('../src/utils/monitoringTemplates');
+const { deviationFor, computeDeviations, slidingScaleFor, ivFluidStatus, templateFor } = require('../src/utils/monitoringTemplates');
+const { listWorkflows, workflowFor, validateWorkflowPrefix } = require('../src/utils/diagnosticWorkflows');
 const { loadScout } = require('./helpers/scout');
 const { scoutIndex, scoutEntries, scoutSearch, scoutCalculate } = loadScout();
 const { tenant } = require('../src/middleware/tenant');
@@ -22,14 +25,49 @@ test('staff IDs include the facility code and six digits', () => {
   assert.match(generateStaffId('UCH'), /^UCH-STF-\d{6}$/);
 });
 
-test('role permissions separate administration and clinical access', () => {
+test('doctor monitoring-order options map to real nursing chart templates', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../Awibi-EHR-Frontend/src/pages/orders/ClinicalOrders.jsx'), 'utf8');
+  const block = source.match(/const MONITORING_TYPES = \[([\s\S]*?)\n\];/)?.[1] || '';
+  const keys = [...block.matchAll(/\['([^']*)',\s*'[^']+'\]/g)].map((match) => match[1]);
+  assert.ok(keys.length >= 10, 'the doctor should see the complete monitoring range');
+  for (const key of keys.filter((item) => item && item !== 'CUSTOM')) {
+    assert.ok(templateFor(key), `${key} is not a real nursing chart template`);
+  }
+});
+
+test('all five diagnostic specialties expose ordered operational workflows', () => {
+  const workflows = listWorkflows();
+  assert.deepEqual(workflows.map((workflow) => workflow.id), [
+    'IMAGING', 'HAEMATOLOGY', 'CHEMICAL_PATHOLOGY', 'MICROBIOLOGY', 'HISTOPATHOLOGY',
+  ]);
+  assert.ok(workflows.every((workflow) => workflow.steps.length >= 6));
+  assert.equal(workflowFor({ testType: 'IMAGING' }).id, 'IMAGING');
+  assert.equal(workflowFor({ testType: 'LAB', diagnosticDiscipline: 'Morbid Anatomy' }).id, 'HISTOPATHOLOGY');
+});
+
+test('diagnostic workflow milestones cannot be completed out of order', () => {
+  const workflow = listWorkflows()[0];
+  assert.equal(validateWorkflowPrefix(workflow, []), true);
+  assert.equal(validateWorkflowPrefix(workflow, [workflow.steps[0].key, workflow.steps[1].key]), true);
+  assert.equal(validateWorkflowPrefix(workflow, [workflow.steps[1].key]), false);
+  assert.equal(validateWorkflowPrefix(workflow, [workflow.steps[0].key, workflow.steps[2].key]), false);
+});
+
+test('facility administration can see and initiate every facility workflow', () => {
   assert.equal(can('ADMIN', null, 'staff'), true);
   // The facility owner sees every record in their facility, including encounters.
   assert.equal(can('ADMIN', null, 'cases'), true);
   assert.equal(can('ADMIN', null, 'orders'), true);
-  // ...but never authors signed clinical content.
-  assert.equal(can('ADMIN', null, 'clinical_write'), false);
-  assert.equal(can('ADMIN', null, 'prescriptions_write'), false);
+  assert.equal(can('ADMIN', null, 'clinical_orders'), true);
+  const adminInitiationPermissions = [
+    'clinical_write', 'prescriptions_write', 'vitals_write',
+    'diagnostic_order', 'diagnostic_process', 'monitoring_write',
+    'monitoring_review', 'drug_admin_write', 'handover_write',
+    'growth_write', 'pharmacy_write', 'inventory_write',
+  ];
+  for (const permission of adminInitiationPermissions) {
+    assert.equal(can('ADMIN', null, permission), true, `ADMIN missing ${permission}`);
+  }
   assert.equal(can('CLINICIAN', 'DOCTOR', 'cases'), true);
   assert.equal(can('CLINICIAN', 'DOCTOR', 'billing'), false);
   assert.equal(can('CLINICIAN', 'LAB', 'lab'), true);
@@ -38,18 +76,37 @@ test('role permissions separate administration and clinical access', () => {
   assert.equal(can('RECORDS', null, 'lab'), false);
   assert.equal(can('RECORDS', null, 'patient_demographics_write'), true);
   assert.equal(can('RECORDS', null, 'clinical_write'), false);
-  assert.equal(can('ADMIN', null, 'vitals_write'), false);
+  assert.equal(can('ADMIN', null, 'vitals_write'), true);
   assert.equal(can('CLINICIAN', 'DOCTOR', 'clinical_write'), true);
+  assert.equal(can('CLINICIAN', 'DOCTOR', 'clinical_orders'), true);
   assert.equal(can('CLINICIAN', 'DOCTOR', 'prescriptions_write'), true);
   assert.equal(can('CLINICIAN', 'NURSE', 'vitals_write'), true);
+  assert.equal(can('CLINICIAN', 'NURSE', 'clinical_orders'), false);
   assert.equal(can('CLINICIAN', 'NURSE', 'prescriptions_write'), false);
   assert.equal(can('CLINICIAN', 'DOCTOR', 'admissions'), false);
   assert.equal(can('CLINICIAN', 'PHARMACIST', 'pharmacy'), true);
   assert.equal(can('CLINICIAN', 'PHARMACIST', 'pharmacy_write'), true);
+  assert.equal(can('CLINICIAN', 'PHARMACIST', 'clinical_orders'), false);
   assert.equal(can('SUPER_ADMIN', null, 'platform'), true);
   assert.equal(can('SUPER_ADMIN', null, 'patients'), false);
   assert.equal(can('SUPER_ADMIN', null, 'cases'), false);
   assert.equal(can('SUPER_ADMIN', null, 'billing'), false);
+});
+
+test('facility administration satisfies every permission enforced by facility routes', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const routesDir = path.join(__dirname, '..', 'src', 'routes');
+  const enforced = new Set();
+
+  for (const name of fs.readdirSync(routesDir).filter((file) => file.endsWith('.js'))) {
+    const source = fs.readFileSync(path.join(routesDir, name), 'utf8');
+    if (!source.includes('tenant')) continue;
+    for (const match of source.matchAll(/requirePermission\(\s*'([^']+)'\s*\)/g)) enforced.add(match[1]);
+  }
+
+  const missing = [...enforced].filter((permission) => !can('ADMIN', null, permission)).sort();
+  assert.deepEqual(missing, [], `ADMIN is blocked from facility permissions: ${missing.join(', ')}`);
 });
 
 test('tenant middleware refuses platform operators even when a facility is attached', () => {
@@ -309,7 +366,7 @@ test('scout search tells you when it is guessing', () => {
 
 test('scout calculators compute correctly', () => {
   const bmi = scoutEntries.body_mass_index_bmi;
-  const { ok, results } = scoutCalculate(bmi, { weight: 70, height: 1.75 });
+  const { ok, results } = scoutCalculate(bmi, { weight: 70, height_cm: 175 });
   assert.equal(ok, true);
   assert.equal(results[0].value, 22.9);
   assert.equal(results[0].band, 'Normal range');
@@ -319,9 +376,9 @@ test('scout calculators refuse rather than produce a wrong number', () => {
   const bmi = scoutEntries.body_mass_index_bmi;
   // A number on screen is taken as correct, so nothing appears unless it is.
   assert.equal(scoutCalculate(bmi, { weight: 70 }).ok, false);
-  assert.equal(scoutCalculate(bmi, { weight: 900, height: 1.75 }).ok, false);
-  assert.equal(scoutCalculate(bmi, { weight: 'seventy', height: 1.75 }).ok, false);
-  assert.equal(scoutCalculate(bmi, { weight: 70, height: 0 }).ok, false);
+  assert.equal(scoutCalculate(bmi, { weight: 900, height_cm: 175 }).ok, false);
+  assert.equal(scoutCalculate(bmi, { weight: 'seventy', height_cm: 175 }).ok, false);
+  assert.equal(scoutCalculate(bmi, { weight: 70, height_cm: 0 }).ok, false);
 });
 
 test('every scout calculator in the corpus produces a number', () => {
@@ -391,7 +448,8 @@ test('the frontend and backend permission maps agree', () => {
     ...frontend.NAV_ITEMS.map((i) => i.key).filter(Boolean),
     'admissions', 'beds', 'monitoring_write', 'monitoring_review', 'clinical_write',
     'prescriptions_write', 'drug_admin_write', 'emergency_write', 'handover_write',
-    'vitals_write', 'patient_demographics_write', 'growth_write',
+    'vitals_write', 'patient_demographics_write', 'growth_write', 'diagnostic_order',
+    'diagnostic_process', 'pharmacy_write', 'inventory_write', 'medication_safety',
   ])];
 
   // Some keys gate a page that never calls the API — Help & Support is static

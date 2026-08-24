@@ -4,14 +4,14 @@ import { HelpCircle, ChevronDown, ChevronUp, Phone, Mail, MessageSquare } from '
 const FAQS = [
   { q: 'How do I register a new patient?', a: 'Go to Patients → New Patient or click the Lookup button and enter a Patient ID. Fill in the 3-step registration form. The system will automatically generate a Patient ID in the format AWB-XXXXXXXX, plus a Hosp No for this facility.' },
   { q: 'What is the difference between a Patient ID and a Hosp No?', a: 'The Hosp No is the chart number this hospital uses for its own records, for example UCH-26-001234. The Patient ID is the AWB-XXXXXXXX identifier that stays with the person across every facility using AwibiEHR, so their record can be found after a transfer or referral.' },
-  { q: 'Can multiple staff log in at the same time?', a: 'Yes. Each staff member has their own account with their specific role and permissions. You can add staff under Staff Management. Staff can log in using their email or their Staff ID (e.g. UCH-STF-100001).' },
+  { q: 'Can multiple staff log in at the same time?', a: 'Yes. Each staff member uses their own account and role. Add them under Staff.' },
   { q: 'Does AwibiEHR work offline?', a: 'Key actions (patient lookup, vital signs, notes, appointments) are queued locally using IndexedDB when offline and automatically synced when the connection is restored.' },
   { q: 'How do I record a lab result?', a: 'Go to Lab & Imaging, find the pending request, and click "Enter Result". Fill in the result text and any clinical interpretation. The status will automatically update to Completed.' },
   { q: 'How do I upgrade my subscription?', a: 'Go to Subscription in the left sidebar. Choose a plan and click Upgrade. Payment is processed securely via Paystack. Your limits are immediately updated after payment.' },
-  { q: 'Is patient data secure?', a: 'Yes. AwibiEHR is built in compliance with the Nigeria Data Protection Act (NDPA) 2023. All PHI access is logged with audit trails, data is encrypted in transit, and no PHI is stored in URLs or logs.' },
+  { q: 'How is patient data protected?', a: 'The app uses staff permissions and audit logs. Production setup must also include HTTPS, secure backups, access reviews and required compliance checks.' },
   { q: 'How do I reset a staff member\'s password?', a: 'Go to Staff, find the staff member, and click the key icon (Reset Password). A temporary password will be shown once — share it with the staff member who should change it on first login.' },
   { q: 'Can I use voice recordings for consultations?', a: 'Yes. When creating a new encounter, select "Voice Recording" as the method. You\'ll be able to record the consultation audio directly. The system stores the audio and allows you to add notes alongside it.' },
-  { q: 'How do I admit a patient to a bed?', a: 'Go to Admissions, click Admit Patient. Select the patient, choose an available bed, and enter the diagnosis. The bed status will automatically update to Occupied.' },
+  { q: 'How do I admit a patient to a bed?', a: 'The doctor sends an admission order. Nursing opens Admissions & beds, confirms the patient and assigns a bed.' },
 ];
 
 export default function Support() {
@@ -28,7 +28,7 @@ export default function Support() {
       <div className="grid sm:grid-cols-3 gap-4">
         {[
           { Icon: Phone, label: 'Call us', value: '+234 817 779 0294', sub: 'Mon–Fri, 8am–6pm' },
-          { Icon: Mail, label: 'Email', value: 'support@awibihealth.com', sub: '24h response time' },
+          { Icon: Mail, label: 'Email', value: 'awibihealth@gmail.com', sub: 'We will reply as soon as possible' },
           { Icon: MessageSquare, label: 'WhatsApp', value: '+234 817 779 0294', sub: 'Quick answers' },
         ].map(({ Icon, label, value, sub }) => (
           <div key={label} className="bg-white border border-gray-200 rounded-xl p-4 text-center hover:shadow-md transition-shadow">

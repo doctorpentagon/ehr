@@ -34,7 +34,7 @@ export default function AddPatient() {
       (data.warnings || []).forEach((warning) => toast.warning(warning.message, { duration: 9000 }));
       navigate(`/dashboard/patients/${data.id}`);
     },
-    onError: err => toast.error(err.response?.data?.error || 'Registration failed'),
+    onError: err => toast.error(err.response?.data?.error || 'Could not register the patient'),
   });
 
   const next = () => { if (step < STEPS.length - 1) setStep(s => s + 1); else mutate(); };
@@ -155,7 +155,7 @@ export default function AddPatient() {
                 <div>
                   <h3 className="text-sm font-semibold text-gray-900">Awibi Identity link (optional)</h3>
                   <p className="text-xs text-gray-500 mt-1">
-                    The hospital record and Hosp No work without Identity. Link only when the patient presents their Identity code or verified account identifier and explicitly agrees.
+                    The hospital record works without Awibi Identity. Link only when the patient presents their code or verified account and agrees.
                   </p>
                 </div>
                 <div>
@@ -167,7 +167,7 @@ export default function AddPatient() {
                 {form.identityIdentifier && (
                   <>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Consent scope</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Records to share</label>
                       <select value={form.identityConsentScope} onChange={set('identityConsentScope')}
                         className="w-full min-h-11 px-3 border border-gray-300 rounded-lg text-sm bg-white">
                         <option value="LAB_ONLY">Diagnostic results only</option>
@@ -179,7 +179,7 @@ export default function AddPatient() {
                         onChange={(event) => setForm((current) => ({ ...current, identityConsentGranted: event.target.checked }))}
                         className="mt-0.5 size-5 rounded border-gray-300" />
                       <span className="text-sm text-gray-700">
-                        I confirm the patient (or authorized guardian) explicitly consented to this facility link and the selected delivery scope.
+                        I confirm the patient or guardian agreed to this link and how records will be shared.
                       </span>
                     </label>
                   </>

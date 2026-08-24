@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ReferenceArea, ReferenceLine, Dot,
+  Tooltip, ReferenceArea, ReferenceLine, Dot, BarChart, Bar, Cell,
 } from 'recharts';
 import { format } from 'date-fns';
 
@@ -60,7 +60,7 @@ function ChartTooltip({ active, payload }) {
   );
 }
 
-export default function MonitoringChart({ series, height = 200, showHeader = true }) {
+export default function MonitoringChart({ series, height = 200, showHeader = true, variant = 'line' }) {
   if (!series?.points?.length) return null;
 
   const { points, goalMin, goalMax, criticalLow, criticalHigh, unit, label, trend } = series;
@@ -103,7 +103,29 @@ export default function MonitoringChart({ series, height = 200, showHeader = tru
       )}
 
       <ResponsiveContainer width="100%" height={height}>
-        <LineChart data={data} margin={{ top: 4, right: 8, bottom: 4, left: -12 }}>
+        {variant === 'bar' ? (
+          <BarChart data={data} margin={{ top: 4, right: 8, bottom: 4, left: -12 }}>
+            <CartesianGrid stroke="#f1f5f9" vertical={false} />
+            {goalMin != null && goalMax != null && (
+              <ReferenceArea y1={goalMin} y2={goalMax} fill="#16a34a" fillOpacity={0.08} stroke="none" />
+            )}
+            {criticalLow != null && <ReferenceLine y={criticalLow} stroke="#b91c1c" strokeDasharray="3 3" strokeWidth={1} />}
+            {criticalHigh != null && <ReferenceLine y={criticalHigh} stroke="#b91c1c" strokeDasharray="3 3" strokeWidth={1} />}
+            <XAxis
+              dataKey="time" type="number" domain={['dataMin', 'dataMax']} scale="time"
+              tickFormatter={(t) => format(new Date(t), 'HH:mm')}
+              tick={{ fontSize: 11, fill: '#64748b' }} stroke="#cbd5e1"
+            />
+            <YAxis domain={domain} tick={{ fontSize: 11, fill: '#64748b' }} stroke="#cbd5e1" width={44} />
+            <Tooltip content={<ChartTooltip />} />
+            <Bar dataKey="value" radius={[4, 4, 0, 0]} isAnimationActive={false}>
+              {data.map((point) => (
+                <Cell key={`${point.at}-${point.value}`} fill={SEVERITY_COLOUR[point.severity] || SEVERITY_COLOUR.NORMAL} />
+              ))}
+            </Bar>
+          </BarChart>
+        ) : (
+          <LineChart data={data} margin={{ top: 4, right: 8, bottom: 4, left: -12 }}>
           <CartesianGrid stroke="#f1f5f9" vertical={false} />
 
           {/* The band the value is supposed to stay inside. */}
@@ -125,7 +147,8 @@ export default function MonitoringChart({ series, height = 200, showHeader = tru
             type="monotone" dataKey="value" stroke="#334155" strokeWidth={1.5}
             dot={<SeverityDot />} activeDot={{ r: 6 }} isAnimationActive={false}
           />
-        </LineChart>
+          </LineChart>
+        )}
       </ResponsiveContainer>
     </div>
   );

@@ -30,7 +30,7 @@ export default function CaseDetail() {
   const { mutate: review, isPending: reviewing } = useMutation({
     mutationFn: () => api.put(`/cases/${id}/review`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['case', id] }); toast.success('Marked as reviewed'); },
-    onError: (e) => toast.error(e?.response?.data?.error || 'Failed to mark reviewed'),
+    onError: (e) => toast.error(e?.response?.data?.error || 'Could not mark the note as reviewed'),
   });
 
   const { mutate: sign, isPending: signing } = useMutation({
@@ -40,7 +40,7 @@ export default function CaseDetail() {
       qc.invalidateQueries({ queryKey: ['cases'] });
       toast.success('Note signed. It is now part of the permanent record and cannot be edited.');
     },
-    onError: (e) => toast.error(e?.response?.data?.error || 'Failed to sign note'),
+    onError: (e) => toast.error(e?.response?.data?.error || 'Could not sign the note'),
   });
 
   const { mutate: saveDiagnosisCodes, isPending: savingDiagnosisCodes } = useMutation({
@@ -52,7 +52,7 @@ export default function CaseDetail() {
       qc.invalidateQueries({ queryKey: ['case', id] });
       toast.success('Diagnosis codes saved. The note is ready for signing.');
     },
-    onError: (e) => toast.error(e?.response?.data?.error || 'Failed to save diagnosis codes'),
+    onError: (e) => toast.error(e?.response?.data?.error || 'Could not save diagnosis codes'),
   });
 
   const user = useSelector(s => s.auth?.user);
@@ -139,7 +139,7 @@ export default function CaseDetail() {
         {!encounter.signedAt && maySign && !encounter.icdCodes?.length && (
           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
             <label htmlFor="case-diagnosis-codes" className="text-xs font-semibold text-amber-950">Diagnosis codes required before signing</label>
-            <p className="text-xs text-amber-900 mt-1">The assessment is the clinical narrative. Add its ICD-10 code here so the encounter is coded and reportable.</p>
+            <p className="text-xs text-amber-900 mt-1">Add the ICD-10 code before signing.</p>
             <div className="flex flex-col sm:flex-row gap-2 mt-2">
               <input id="case-diagnosis-codes" value={diagnosisCodes} onChange={event => setDiagnosisCodes(event.target.value)}
                 placeholder="e.g. G44.2, I10" className="min-h-10 flex-1 rounded-lg border border-amber-300 bg-white px-3 text-sm" />
@@ -263,7 +263,7 @@ export default function CaseDetail() {
 
         {encounter.aiSuggestions && Object.keys(encounter.aiSuggestions).length > 0 && (
           <div>
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">AI Suggestions</h3>
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Draft suggestions</h3>
             <div className="bg-[#2D5BFF]/5 border border-[#2D5BFF]/10 rounded-xl p-4 text-sm text-[#2D5BFF]">
               <pre className="whitespace-pre-wrap">{JSON.stringify(encounter.aiSuggestions, null, 2)}</pre>
             </div>

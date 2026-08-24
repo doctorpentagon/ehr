@@ -340,8 +340,9 @@ router.put('/:id', createEncounter, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// Signing is an act of clinical accountability, so it needs clinical_write —
-// a facility administrator can read every note but can never sign one.
+// Signing is an act of clinical accountability, so it needs clinical_write.
+// Facility administrators now hold that permission by owner decision; the
+// signature remains attributed to their actual administrator identity.
 router.post('/:id/sign', [authenticate, tenant, requirePermission('clinical_write')], async (req, res, next) => {
   try {
     const existing = await prisma.case.findFirst({ where: { id: req.params.id, facilityId: req.ctx.facilityId } });

@@ -38,7 +38,7 @@ export default function Staff() {
   const { mutate: toggleActive } = useMutation({
     mutationFn: ({ id, isActive }) => api.put(`/staff/${id}`, { isActive }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['staff'] }); toast.success('Staff status updated'); },
-    onError: () => toast.error('Failed to update'),
+    onError: () => toast.error('Could not update the staff record'),
   });
 
   return (
@@ -161,7 +161,7 @@ function StaffModal({ open, onClose, staff }) {
       toast.success(isEdit ? 'Staff updated' : 'Staff added — login credentials sent by email');
       onClose();
     },
-    onError: err => toast.error(err.response?.data?.error || 'Failed to save'),
+    onError: err => toast.error(err.response?.data?.error || 'Could not save the staff record'),
   });
 
   return (

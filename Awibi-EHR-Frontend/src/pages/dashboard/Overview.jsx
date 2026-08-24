@@ -165,7 +165,7 @@ function AdminOverview({ stats, summary, appointments, loading }) {
         {/* Weekly insights */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Weekly Insights</CardTitle>
+            <CardTitle className="text-base">Weekly summary</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
@@ -176,7 +176,7 @@ function AdminOverview({ stats, summary, appointments, loading }) {
                 </div>
               ))}
               {(!stats?.weeklyInsight || stats.weeklyInsight.length === 0) && (
-                <p className="text-sm text-gray-400">Loading insights…</p>
+                <p className="text-sm text-gray-400">Loading summary…</p>
               )}
             </div>
           </CardContent>
@@ -556,7 +556,7 @@ function NurseOverview({ stats, appointments, loading }) {
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard label="Active Monitoring" value={ward?.activeSheets} color="#335CF4" icon={IconActivityHeartbeat} loading={loading} onClick={() => navigate('/dashboard/nursing')} />
         <StatCard label="Abnormal Today" value={ward?.abnormalToday} color="#FF5A5A" icon={IconAlertTriangle} loading={loading} onClick={() => navigate('/dashboard/nursing')} sub="flagged observations" />
-        <StatCard label="Doses Given Today" value={ward?.dosesToday} color="#669933" icon={IconPill} loading={loading} onClick={() => navigate('/dashboard/nursing/drug-chart')} />
+        <StatCard label="Doses Given Today" value={ward?.dosesToday} color="#669933" icon={IconPill} loading={loading} onClick={() => navigate('/dashboard/nursing?view=medications')} />
         <StatCard label="Shift Reports To Read" value={ward?.unacknowledgedHandovers} color="#D55D90" icon={IconClipboardList} loading={loading} onClick={() => navigate('/dashboard/nursing/shift-report')} />
       </div>
 
@@ -589,7 +589,7 @@ function NurseOverview({ stats, appointments, loading }) {
           <CardContent>
             <div className="grid grid-cols-2 gap-3">
               <QuickAction label="Monitoring" path="/dashboard/nursing" color="#335CF4" icon={IconActivityHeartbeat} />
-              <QuickAction label="Drug Chart" path="/dashboard/nursing/drug-chart" color="#669933" icon={IconPill} />
+              <QuickAction label="Medication monitoring" path="/dashboard/nursing?view=medications" color="#669933" icon={IconPill} />
               <QuickAction label="Shift report" path="/dashboard/nursing/shift-report" color="#D55D90" icon={IconClipboardList} />
               <QuickAction label="Record Vitals" path="/dashboard/patients" color="#8B5CF6" icon={IconStethoscope} />
               <QuickAction label="Admissions" path="/dashboard/admissions" color="#0EA5E9" icon={IconBed} />
@@ -686,7 +686,7 @@ function PharmacistOverview({ stats, loading }) {
       <Card>
         <CardHeader><CardTitle className="text-base">Pharmacy workspace</CardTitle></CardHeader>
         <CardContent>
-          <p className="text-sm text-gray-500 mb-4">Verify prescriptions, issue medicines against the patient record, record amount, and monitor facility stock.</p>
+          <p className="text-sm text-gray-500 mb-4">Verify prescriptions, dispense medicines and manage stock.</p>
           <button onClick={() => navigate('/dashboard/pharmacy')} className="px-4 py-2.5 rounded-lg bg-purple-700 text-white text-sm font-semibold">Open pharmacy</button>
         </CardContent>
       </Card>

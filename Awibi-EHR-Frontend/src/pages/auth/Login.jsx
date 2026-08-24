@@ -183,7 +183,7 @@ export default function Login() {
       )}
       {googleError && (
         <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-          Google sign-in failed. Please try again or use email/password.
+          Could not sign in with Google. Try again or use email and password.
         </div>
       )}
 

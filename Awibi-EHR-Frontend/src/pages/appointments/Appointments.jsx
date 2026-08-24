@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Calendar, Clock, Search, Edit2, X, CreditCard, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Calendar, Clock, Search, Edit2, X, CreditCard, CheckCircle, ChevronLeft, ChevronRight, Copy, ExternalLink, Inbox } from 'lucide-react';
 import EmptyState from '@/components/ui/EmptyState';
 import { addDays, addMonths, addWeeks, eachDayOfInterval, endOfDay, endOfMonth, endOfWeek, format, isSameDay, isSameMonth, startOfDay, startOfMonth, startOfWeek, subMonths, subWeeks } from 'date-fns';
 import api from '@/lib/api';
@@ -10,6 +11,7 @@ import StatusBadge from '@/components/ui/StatusBadge';
 import Avatar from '@/components/ui/Avatar';
 import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
+import { can } from '@/lib/permissions';
 import { toast } from 'sonner';
 
 const VISIT_TYPES = ['CONSULTATION', 'FOLLOW_UP', 'EMERGENCY', 'ROUTINE', 'PROCEDURE', 'SPECIALIST'];
@@ -23,15 +25,38 @@ const PAY_COLOR = {
 
 export default function Appointments() {
   const qc = useQueryClient();
+  const { user, facility } = useSelector(state => state.auth);
   const [searchParams] = useSearchParams();
   const presetPatientId = searchParams.get('patientId') || '';
+  const isDoctor = user?.role?.toUpperCase() === 'CLINICIAN' && user?.subRole?.toUpperCase() === 'DOCTOR';
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [dateFilter, setDateFilter] = useState('');
+  const [scheduleScope, setScheduleScope] = useState(isDoctor ? 'MINE' : 'FACILITY');
   const [modal, setModal] = useState(presetPatientId ? 'add' : null); // null | 'add' | appt object
   const [payAppt, setPayAppt] = useState(null);
   const [calendarView, setCalendarView] = useState('MONTH');
   const [calendarDate, setCalendarDate] = useState(new Date());
+  const scheduleDoctorId = scheduleScope === 'MINE' ? user?.id : '';
+  // Facilities created before stored slugs were introduced still resolve by
+  // their legacy name-derived address in the public API. Keep their link
+  // usable while migrations backfill the authoritative stored slug.
+  const publicSlug = facility?.slug || String(facility?.name || '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const publicBookingPath = publicSlug ? `/clinic/${publicSlug}` : '';
+  const publicBookingUrl = publicBookingPath && typeof window !== 'undefined'
+    ? `${window.location.origin}${publicBookingPath}`
+    : '';
+
+  const copyPublicBookingLink = async () => {
+    if (!publicBookingUrl) return;
+    try {
+      await navigator.clipboard.writeText(publicBookingUrl);
+      toast.success('Patient booking link copied');
+    } catch (_) {
+      toast.error('Could not copy automatically. Open the page and copy its address.');
+    }
+  };
 
   const calendarStart = calendarView === 'DAY'
     ? startOfDay(calendarDate)
@@ -45,16 +70,16 @@ export default function Appointments() {
       : endOfWeek(endOfMonth(calendarDate), { weekStartsOn: 1 });
 
   const { data, isLoading } = useQuery({
-    queryKey: ['appointments', search, statusFilter, dateFilter],
-    queryFn: () => api.get('/appointments', { params: { search, status: statusFilter, date: dateFilter, limit: 40 } }).then(r => r.data),
+    queryKey: ['appointments', search, statusFilter, dateFilter, scheduleDoctorId],
+    queryFn: () => api.get('/appointments', { params: { search, status: statusFilter, date: dateFilter, doctorId: scheduleDoctorId || undefined, limit: 40 } }).then(r => r.data),
   });
 
   const appts = data?.appointments || data || [];
 
   const { data: calendarData, isLoading: calendarLoading } = useQuery({
-    queryKey: ['appointments-calendar', calendarView, calendarStart.toISOString(), calendarEnd.toISOString(), statusFilter],
+    queryKey: ['appointments-calendar', calendarView, calendarStart.toISOString(), calendarEnd.toISOString(), statusFilter, scheduleDoctorId],
     queryFn: () => api.get('/appointments', {
-      params: { startDate: calendarStart.toISOString(), endDate: calendarEnd.toISOString(), status: statusFilter, limit: 500 },
+      params: { startDate: calendarStart.toISOString(), endDate: calendarEnd.toISOString(), status: statusFilter, doctorId: scheduleDoctorId || undefined, limit: 500 },
     }).then(r => r.data),
   });
   const calendarAppointments = calendarData?.appointments || calendarData || [];
@@ -63,13 +88,13 @@ export default function Appointments() {
   const { mutate: updateStatus } = useMutation({
     mutationFn: ({ id, status }) => api.put(`/appointments/${id}`, { status }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['appointments'] }); toast.success('Status updated'); },
-    onError: () => toast.error('Failed to update status'),
+    onError: () => toast.error('Could not update the appointment'),
   });
 
   const { mutate: cancelAppt } = useMutation({
     mutationFn: id => api.put(`/appointments/${id}`, { status: 'CANCELLED' }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['appointments'] }); toast.success('Appointment cancelled'); },
-    onError: () => toast.error('Failed to cancel'),
+    onError: () => toast.error('Could not cancel the appointment'),
   });
 
   const today = appts.filter(a => a.scheduledAt && format(new Date(a.scheduledAt), 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd'));
@@ -92,6 +117,57 @@ export default function Appointments() {
           <Plus size={16} /> Book Appointment
         </button>
       </div>
+
+      <section className="rounded-xl border border-blue-200 bg-blue-50/60 p-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">How online appointment booking works</h2>
+            <p className="mt-1 text-sm text-gray-600">
+              Patient form <span aria-hidden="true">→</span> reception review <span aria-hidden="true">→</span> confirmed appointment <span aria-hidden="true">→</span> selected doctor's schedule.
+            </p>
+            <p className="mt-1 text-xs text-gray-500">Online requests wait for staff approval before they enter the schedule.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {publicBookingPath ? (
+              <>
+                <a href={publicBookingPath} target="_blank" rel="noreferrer"
+                  className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-blue-200 bg-white px-3 text-sm font-medium text-[#2D5BFF] hover:bg-blue-50">
+                  <ExternalLink size={15} /> Open patient form
+                </a>
+                <button type="button" onClick={copyPublicBookingLink}
+                  className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-blue-200 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-blue-50">
+                  <Copy size={15} /> Copy link
+                </button>
+              </>
+            ) : (
+              <span className="self-center text-xs text-amber-700">Complete the facility's public profile to publish its booking link.</span>
+            )}
+            {can(user?.role, user?.subRole, 'bookings') && (
+              <Link to="/dashboard/bookings"
+                className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#2D5BFF] px-3 text-sm font-medium text-white hover:bg-[#1a45e0]">
+                <Inbox size={15} /> Review requests
+              </Link>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {isDoctor && (
+        <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3">
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Schedule shown</p>
+            <p className="text-xs text-gray-500">Approved online bookings appear in My schedule.</p>
+          </div>
+          <div className="inline-flex rounded-lg bg-gray-100 p-1">
+            {[['MINE', 'My schedule'], ['FACILITY', 'Facility']].map(([value, label]) => (
+              <button key={value} type="button" onClick={() => setScheduleScope(value)}
+                className={`min-h-9 rounded-md px-3 text-xs font-semibold ${scheduleScope === value ? 'bg-white text-[#2D5BFF] shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
         <div className="flex flex-col gap-3 border-b border-gray-100 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -309,7 +385,7 @@ function AppointmentModal({ open, onClose, initial, initialPatientId = '' }) {
       toast.success(isEdit ? 'Appointment updated' : 'Appointment booked');
       onClose();
     },
-    onError: err => toast.error(err.response?.data?.error || 'Failed'),
+    onError: err => toast.error(err.response?.data?.error || 'Could not save the appointment'),
   });
 
   return (
@@ -404,7 +480,7 @@ function PayModal({ appt, onClose }) {
       toast.success('Payment recorded');
       onClose();
     } catch {
-      toast.error('Failed to record payment');
+      toast.error('Could not record the payment');
     } finally {
       setLoading(false);
     }
