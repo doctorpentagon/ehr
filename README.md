@@ -165,15 +165,24 @@ seed output, and the login UI.
 Use `Awibi-EHR-Backend/.env.local` for local credentials. Never commit or share
 that file.
 
-Facility: **UCH Ibadan Demo** · Plan: **SMALL** · 11 patients seeded
+Facility: **UCH Ibadan Demo** · Plan: **SMALL** · synthetic patients only
 
 For repeated cross-module QA, use the permanent synthetic record **Awibi Test Patient**:
 Health ID `AWB-TEST2PAT`, hospital number `DEMO-TEST-001`. The demo seed upserts this
 record without changing either identifier, including when an existing local database is reused.
 Never use this fixture for real care.
 
-A second facility, **Awibi Isolation Test Facility**, is seeded with one
-administrator and no clinical records. It exists so tenant isolation can be
+The curated end-to-end guide uses a separate clearly labelled record, **Amina Bello (Sample)**
+with hospital number `DEMO-SAMPLE-001`. In local demo access and an explicitly configured hosted
+`DEMO_MODE` beta, the API idempotently refreshes this synthetic journey at startup. A compact
+**Demo examples** strip then appears inside the facility dashboard and links each permitted role
+to ready-made patient, consultation, order, diagnostics, admission, nursing, pharmacy,
+communication and administrative examples. The strip stays collapsed until opened, and it is
+absent from ordinary production facilities. Do not copy a developer's local database into the
+hosted beta; use the seed so temporary test records cannot be published.
+
+A second facility, **Awibi Isolation Test Facility**, receives its own separate
+copy of the curated synthetic journey. It exists so tenant isolation can be
 demonstrated rather than asserted: sign in there and none of UCH Ibadan's
 records are reachable, by listing or by direct id. `npm run test:tenancy`
 checks exactly that.
@@ -852,7 +861,7 @@ npm run test:loops     # 81 checks — each workflow from initiation to completi
 npm run test:clinical-closures # 38 critical clinical lifecycle checks
 npm run test:pharmacy-care     # 32 pharmacy-care lifecycle checks
 npm run test:diagnostic-ordering # 12 detailed diagnostic-order checks
-npm run test:showcase          # 32 seeded monitoring/pharmacy sample checks
+npm run test:showcase          # curated cross-module sample journey checks
 npm run test:roles     # every screen each role is offered, actually opened
 npm run test:tenancy   # one facility's records fetched with another's token
 npm run test:all       # all seven backend suites

@@ -8,6 +8,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
 const bcrypt = require('bcryptjs');
 const { prisma, connectDatabase } = require('../utils/database');
 const { generateUPID } = require('../utils/upid');
+const { seedShowcases } = require('./showcase');
 
 const RESET = process.argv.includes('--reset');
 
@@ -102,7 +103,8 @@ async function seed() {
       update: { facilityId: existingFacility.id, ...PERMANENT_TEST_PATIENT },
       create: { facilityId: existingFacility.id, ...PERMANENT_TEST_PATIENT },
     });
-    console.log('✅  Demo data already seeded; pharmacy access and permanent test patient verified. Use --reset to re-seed all fixtures.');
+    await seedShowcases(prisma, [existingFacility]);
+    console.log('✅  Demo data already seeded; access, permanent test patient and curated examples verified. Use --reset to rebuild all fixtures.');
     process.exit(0);
   }
 
@@ -296,6 +298,8 @@ async function seed() {
 
   await prisma.admission.create({ data: { facilityId: facility.id, patientId: demi.id, bedId: beds[1].id, admittedById: nurse.id, diagnosis: 'Pneumonia', status: 'ADMITTED' } });
   await prisma.bed.update({ where: { id: beds[1].id }, data: { status: 'OCCUPIED', currentPatientId: demi.id } });
+
+  await seedShowcases(prisma, [facility]);
 
   console.log('');
   console.log('✅  Demo data seeded successfully!');

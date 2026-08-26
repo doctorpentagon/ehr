@@ -7,6 +7,7 @@ import AlertBanner from '@/components/clinical/AlertBanner';
 import TopBar from './TopBar';
 import OfflineBanner from '@/components/ui/OfflineBanner';
 import { logout } from '@/store/authSlice';
+import DemoExampleGuide from './DemoExampleGuide';
 
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes — shared device safety
 const IDLE_WARNING_MS = IDLE_TIMEOUT_MS - (2 * 60 * 1000);
@@ -135,6 +136,7 @@ export default function AppShell() {
               which is the thing that makes an app feel broken on a phone.
               Tables opt back in with their own overflow-x-auto. */}
           <div className="mx-auto w-full max-w-350 overflow-x-hidden px-4 py-4 md:px-6 md:py-6 lg:px-8">
+            <DemoExampleGuide />
             {/* Facility-wide clinical alerts, collapsed to one line unless
                 opened — a banner that fills the screen daily stops being read. */}
             {!isPlatformOperator && <AlertBanner />}

@@ -85,6 +85,31 @@ async function start() {
   // keeps missing-secret failures explicit instead of failing during imports.
   const app = require('./app');
   await connectDatabase();
+  // Hosted and local demo environments should show the same curated synthetic
+  // journey. This is idempotent and is never run for an ordinary production
+  // facility. A showcase failure must not take the clinical API offline.
+  if (DEMO_MODE || process.env.LOCAL_DEMO_ACCESS === 'true') {
+    try {
+      const { prisma } = require('./utils/database');
+      const { seedShowcases } = require('./seeds/showcase');
+      const demoFacilities = await prisma.facility.findMany({
+        where: {
+          OR: [
+            { name: { contains: 'Demo', mode: 'insensitive' } },
+            { name: { contains: 'Test', mode: 'insensitive' } },
+            { users: { some: { email: { endsWith: '@local.awibi.test' } } } },
+          ],
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (demoFacilities.length) {
+        await seedShowcases(prisma, demoFacilities);
+        console.log(`  Demo examples ready in ${demoFacilities.length} facilit${demoFacilities.length === 1 ? 'y' : 'ies'}`);
+      }
+    } catch (error) {
+      console.error('  Demo examples could not be refreshed; the API will continue without them.');
+    }
+  }
   app.listen(PORT, () => {
     console.log('');
     console.log('╔═══════════════════════════════════════════╗');

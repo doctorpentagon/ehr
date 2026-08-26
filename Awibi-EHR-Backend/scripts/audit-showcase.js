@@ -38,6 +38,12 @@ async function request(method, path, token, body) {
     check(`${account.facility.name}: demo login`, login.status === 200 && Boolean(login.data?.accessToken));
     const token = login.data.accessToken;
 
+    const index = await request('GET', '/showcase', token);
+    check(`${account.facility.name}: compact example index is enabled`, index.status === 200 && index.data?.enabled === true && index.data?.synthetic === true);
+    check(`${account.facility.name}: example index exposes no real patient fallback`, index.data?.patient?.mrn === 'DEMO-SAMPLE-001');
+    check(`${account.facility.name}: guide covers the five diagnostics`, index.data?.examples?.diagnostics === 5, `${index.data?.examples?.diagnostics || 0} workflows`);
+    check(`${account.facility.name}: guide links consultation, admission and handover`, Boolean(index.data?.examples?.consultation && index.data?.examples?.admission && index.data?.examples?.handover));
+
     const patients = await request('GET', '/patients?search=DEMO-SAMPLE-001&limit=5', token);
     const patient = patients.data?.patients?.find(item => item.mrn === 'DEMO-SAMPLE-001');
     check(`${account.facility.name}: sample patient resolves`, patients.status === 200 && Boolean(patient?.id), patient?.universalPatientId);
@@ -53,6 +59,26 @@ async function request(method, path, token, body) {
     check(`${account.facility.name}: ordering professional is attributed`, Boolean(monitoringDetail.data?.originatingOrder?.orderedBy?.id));
     check(`${account.facility.name}: monitoring updates close the order loop`, monitoringDetail.data?.originatingOrder?.executions?.length === 5, `${monitoringDetail.data?.originatingOrder?.executions?.length || 0} executions`);
     check(`${account.facility.name}: numeric values can drive a visual trend`, monitoringDetail.data?.entries?.every(entry => Number.isFinite(Number(entry.values?.urineOutputMl))));
+
+    const consultation = await request('GET', `/cases/${index.data.examples.consultation}`, token);
+    check(`${account.facility.name}: sample consultation opens`, consultation.status === 200 && consultation.data?.patientId === patient.id);
+    check(`${account.facility.name}: sample consultation is signed and attributed`, consultation.data?.status === 'SIGNED' && Boolean(consultation.data?.signedAt && consultation.data?.signedBy?.id));
+    check(`${account.facility.name}: consultation routes nursing, medicine and diagnostics together`,
+      consultation.data?.structuredOrders?.orders?.length === 1
+        && consultation.data?.structuredOrders?.medications?.length === 2
+        && consultation.data?.structuredOrders?.investigations?.length === 5,
+      `${consultation.data?.structuredOrders?.orders?.length || 0}/${consultation.data?.structuredOrders?.medications?.length || 0}/${consultation.data?.structuredOrders?.investigations?.length || 0}`);
+
+    const diagnostics = await request('GET', `/lab?patientId=${patient.id}&status=COMPLETED&limit=10`, token);
+    const disciplines = new Set((diagnostics.data?.requests || []).filter(item => item.testName?.startsWith('Sample:')).map(item => item.diagnosticDiscipline));
+    check(`${account.facility.name}: all five completed diagnostic examples are listed`, diagnostics.status === 200 && disciplines.size === 5, `${disciplines.size} disciplines`);
+    check(`${account.facility.name}: diagnostic workflows are completed and verified`, (diagnostics.data?.requests || []).filter(item => item.testName?.startsWith('Sample:')).every(item => item.verifiedAt && item.workflowChecklist?.every(step => step.completedAt)));
+
+    const appointments = await request('GET', `/appointments?patientId=${patient.id}&limit=10`, token);
+    check(`${account.facility.name}: confirmed sample follow-up is listed`, appointments.status === 200 && appointments.data?.appointments?.some(item => item.remarks === '[Sample journey] Follow-up after medicine review' && item.status === 'CONFIRMED'));
+
+    const admissions = await request('GET', '/admissions?status=ADMITTED', token);
+    check(`${account.facility.name}: nurse-completed sample admission is listed`, admissions.status === 200 && admissions.data?.some(item => item.id === index.data.examples.admission && item.bed?.bedNumber === 'DEMO-01'));
 
     const pharmacy = await request('GET', `/orders/pharmacy/patient/${patient.id}`, token);
     check(`${account.facility.name}: pharmacy sample opens`, pharmacy.status === 200 && pharmacy.data?.patient?.id === patient.id);

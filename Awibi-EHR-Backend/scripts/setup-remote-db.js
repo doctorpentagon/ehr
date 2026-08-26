@@ -100,19 +100,16 @@ const env = { ...process.env, ...demoEnv, DATABASE_URL: url, DIRECT_URL: url };
   const [users, patients] = await Promise.all([db.user.count(), db.patient.count()]);
   console.log(`     ${users} staff, ${patients} patients`);
 
-  if (users > 0) {
-    // Seeding twice would fail on unique constraints, or worse, half-succeed.
-    console.log('\n3/3  Already populated — skipping the seed.');
-    console.log('     To start over: add --reset to the seed and run it deliberately.\n');
-  } else {
-    console.log('\n3/3  Loading demo data…');
-    await db.$disconnect();
-    try {
-      execSync('node src/seeds/demo.js', { env, stdio: 'inherit' });
-    } catch {
-      console.error('\nSeeding failed. The tables exist, so you can re-run just the seed.\n');
-      process.exit(1);
-    }
+  // The seed is now idempotent. Run it even when the hosted beta already has
+  // accounts so newly added curated examples reach existing testers without a
+  // destructive reset or database copy from a developer laptop.
+  console.log(users > 0 ? '\n3/3  Refreshing demo access and examples…' : '\n3/3  Loading demo data and examples…');
+  await db.$disconnect();
+  try {
+    execSync('node src/seeds/demo.js', { env, stdio: 'inherit' });
+  } catch {
+    console.error('\nSeeding failed. Existing hosted records were not cleared; fix the error and re-run this command.\n');
+    process.exit(1);
   }
 
   const check = new PrismaClient({ datasources: { db: { url } } });

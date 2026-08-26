@@ -19,6 +19,7 @@ CRITICAL NEXT SETUPS FROM THE 26 AUGUST AUDIT
 [ ] Name a release owner, clinical safety officer, data protection officer, security owner, diagnostics owner, pharmacy owner, and incident commander.
 [ ] Before the next beta, rotate every admin/demo credential or access code that appeared in a screenshot, status, chat, shared document, or terminal recording. Never reuse a local demo secret in a hosted environment.
 [ ] For hosted DEMO_MODE, set a unique DEMO_ACCESS_CODE of at least 16 characters and restrict the beta URL to named testers where practical. Use synthetic data only.
+[ ] After each hosted beta deployment, confirm the dashboard shows the compact Demo examples strip for hospital-number DEMO-SAMPLE-001 and run npm run test:showcase against that API. The demo startup refresh is idempotent; never upload or clone the local development database to publish examples.
 [ ] Approve the exact pilot scope, facilities, roles, synthetic/real-data boundary, rollback criteria, support hours, and escalation contacts.
 [ ] Obtain signed facility approval for every diagnostic test, specimen rule, method/analyser, unit, reference interval, critical interval, and turnaround target.
 [ ] Approve specialist co-signing, corrected-report, addendum, critical-call, read-back, referral, and external-result policies.

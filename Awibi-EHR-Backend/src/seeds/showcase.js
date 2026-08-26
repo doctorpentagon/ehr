@@ -1,5 +1,6 @@
 const bcrypt = require('bcryptjs');
 const { templateFor } = require('../utils/monitoringTemplates');
+const { workflowFor } = require('../utils/diagnosticWorkflows');
 
 const SAMPLE_MRN = 'DEMO-SAMPLE-001';
 const SAMPLE_SHEET_TITLE = 'Sample: Fluid balance and urine output';
@@ -18,6 +19,7 @@ async function ensureProfessional(prisma, facility, kind, passwordHash) {
     DOCTOR: { firstName: 'Dr. Chidi', lastName: 'Okeke', role: 'CLINICIAN', subRole: 'DOCTOR', specialty: 'Internal Medicine' },
     NURSE: { firstName: 'Nurse Amina', lastName: 'Bello', role: 'CLINICIAN', subRole: 'NURSE', specialty: 'Medical Nursing' },
     PHARMACIST: { firstName: 'Pharm. Tola', lastName: 'Adebayo', role: 'CLINICIAN', subRole: 'PHARMACIST', specialty: 'Clinical Pharmacy' },
+    LAB: { firstName: 'Scientist Kemi', lastName: 'Adeoye', role: 'CLINICIAN', subRole: 'LAB', specialty: 'Diagnostics' },
   }[kind];
 
   const existing = await prisma.user.findFirst({
@@ -50,10 +52,11 @@ async function findOrCreate(prismaModel, where, data) {
 }
 
 async function seedFacilityShowcase(prisma, facility, passwordHash) {
-  const [doctor, nurse, pharmacist] = await Promise.all([
+  const [doctor, nurse, pharmacist, diagnostics] = await Promise.all([
     ensureProfessional(prisma, facility, 'DOCTOR', passwordHash),
     ensureProfessional(prisma, facility, 'NURSE', passwordHash),
     ensureProfessional(prisma, facility, 'PHARMACIST', passwordHash),
+    ensureProfessional(prisma, facility, 'LAB', passwordHash),
   ]);
 
   const patientData = {
@@ -290,7 +293,266 @@ async function seedFacilityShowcase(prisma, facility, passwordHash) {
     },
   );
 
-  return { facility: facility.name, patientId: patient.id, healthId: patient.universalPatientId, sheetId: sheet.id, orderId: order.id, activePrescriptionId: activePrescription.id };
+  // One deliberately curated patient journey powers the lightweight demo
+  // guide. It is labelled everywhere and upserted by stable markers, so a
+  // hosted beta can safely run this after every deployment without creating
+  // piles of duplicate records.
+  const consultation = await findOrCreate(
+    prisma.case,
+    { facilityId: facility.id, patientId: patient.id, title: 'Sample: Structured outpatient consultation' },
+    {
+      facilityId: facility.id,
+      patientId: patient.id,
+      authorId: doctor.id,
+      signedById: doctor.id,
+      title: 'Sample: Structured outpatient consultation',
+      chiefComplaint: 'Three-day history of headache; no weakness, seizure or loss of consciousness.',
+      history: 'Known hypertension. Missed several doses after medicine ran out. No head injury.',
+      reviewOfSystems: 'No chest pain, breathlessness, visual loss or focal neurological symptoms.',
+      examination: 'Comfortable at rest. BP 156/96 mmHg, pulse 82/min, temperature 36.8 °C. Neurological examination normal.',
+      assessment: 'Hypertension above target, likely related to interrupted treatment. No current emergency feature.',
+      plan: 'Restart medicine after pharmacy review, check renal profile, monitor blood pressure and review in two weeks.',
+      notes: 'Synthetic signed example. It demonstrates reviewed structured entry; it is not clinical advice.',
+      doctorsOrders: 'Hourly fluid balance while admitted; renal profile; pharmacist adherence review.',
+      captureMethod: 'QUESTIONNAIRE',
+      encounterType: 'CONSULTATION',
+      status: 'SIGNED',
+      signedAt: atHoursAgo(5),
+      reviewedByClinicianAt: atHoursAgo(5),
+      reviewedById: doctor.id,
+      occurredAt: atHoursAgo(5.5),
+      icdCodes: ['I10'],
+    },
+  );
+
+  // These records are created earlier because the detailed nursing and
+  // pharmacy fixtures need their ids. Attach them to the consultation once it
+  // exists so the case detail shows one continuous routed transaction instead
+  // of three unrelated examples.
+  await prisma.order.update({ where: { id: order.id }, data: { caseId: consultation.id } });
+  await prisma.prescription.updateMany({
+    where: { id: { in: [dispensedPrescription.id, activePrescription.id] }, facilityId: facility.id },
+    data: { caseId: consultation.id },
+  });
+
+  const appointment = await findOrCreate(
+    prisma.appointment,
+    { facilityId: facility.id, patientId: patient.id, remarks: '[Sample journey] Follow-up after medicine review' },
+    {
+      facilityId: facility.id,
+      patientId: patient.id,
+      doctorId: doctor.id,
+      caseId: consultation.id,
+      scheduledAt: new Date(Date.now() + 14 * 86400000),
+      duration: 30,
+      visitType: 'FOLLOW_UP',
+      status: 'CONFIRMED',
+      charges: 5000,
+      paidAmount: 5000,
+      paymentStatus: 'PAID',
+      remarks: '[Sample journey] Follow-up after medicine review',
+    },
+  );
+
+  const diagnosticExamples = [
+    { name: 'Sample: Abdominal ultrasound', testType: 'IMAGING', discipline: 'Imaging & Radiology', specimen: null, findings: 'Liver, gallbladder, kidneys and spleen are within expected sonographic limits.', impression: 'No significant abdominopelvic abnormality demonstrated.', modality: 'ULTRASOUND' },
+    { name: 'Sample: Full blood count', testType: 'LAB', discipline: 'Haematology', specimen: 'EDTA whole blood', result: 'Hb 12.8 g/dL; WBC 6.7 ×10⁹/L; Platelets 248 ×10⁹/L. Within stated adult reference intervals.' },
+    { name: 'Sample: Renal function and electrolytes', testType: 'LAB', discipline: 'Chemical Pathology', specimen: 'Serum', result: 'Na 139 mmol/L; K 4.2 mmol/L; Urea 4.8 mmol/L; Creatinine 78 µmol/L.' },
+    { name: 'Sample: Urine microscopy, culture and sensitivity', testType: 'LAB', discipline: 'Microbiology', specimen: 'Mid-stream urine', result: 'No significant bacterial growth after incubation.' },
+    { name: 'Sample: Cervical biopsy', testType: 'LAB', discipline: 'Histopathology & Morbid Anatomy', specimen: 'Formalin-fixed cervical biopsy', result: 'Benign cervical tissue with chronic inflammation; no dysplasia identified in this synthetic example.' },
+  ];
+  const diagnosticsResults = [];
+  for (const example of diagnosticExamples) {
+    const workflow = workflowFor({ testType: example.testType, diagnosticDiscipline: example.discipline });
+    const checklist = (workflow?.steps || []).map((step, index) => ({
+      key: step.key,
+      title: step.title,
+      completedAt: atHoursAgo(4 - (index * 0.25)).toISOString(),
+      completedById: diagnostics.id,
+    }));
+    diagnosticsResults.push(await findOrCreate(
+      prisma.labRequest,
+      { facilityId: facility.id, patientId: patient.id, testName: example.name },
+      {
+        facilityId: facility.id,
+        patientId: patient.id,
+        caseId: consultation.id,
+        requestedById: doctor.id,
+        processedById: diagnostics.id,
+        verifiedById: diagnostics.id,
+        testName: example.name,
+        testType: example.testType,
+        diagnosticDiscipline: example.discipline,
+        priority: 'ROUTINE',
+        status: 'COMPLETED',
+        result: example.result || example.impression,
+        reportFindings: example.findings || null,
+        reportImpression: example.impression || null,
+        imagingModality: example.modality || null,
+        accessionNumber: example.modality ? `DEMO-${String(facility.id).slice(0, 6).toUpperCase()}-IMG-001` : null,
+        pacsStudyUrl: null,
+        specimenType: example.specimen,
+        collectedAt: example.specimen ? atHoursAgo(4.5) : null,
+        receivedAt: atHoursAgo(4.25),
+        completedAt: atHoursAgo(2.5),
+        verifiedAt: atHoursAgo(2.5),
+        reviewedByDoctorAt: atHoursAgo(2),
+        patientDateOfBirthAtOrder: patient.dateOfBirth,
+        patientGenderAtOrder: patient.gender,
+        requestOrigin: 'CLINICIAN_ORDER',
+        workflowChecklist: checklist,
+        resultVersion: 1,
+        notes: 'Synthetic completed diagnostic example for the Awibi beta guide.',
+      },
+    ));
+  }
+
+  const department = await findOrCreate(
+    prisma.department,
+    { facilityId: facility.id, code: 'DEMO-WARD' },
+    { facilityId: facility.id, name: 'Demo Medical Ward', code: 'DEMO-WARD', description: 'Synthetic ward used only by the beta example.', isActive: true },
+  );
+  const bed = await findOrCreate(
+    prisma.bed,
+    { facilityId: facility.id, bedNumber: 'DEMO-01' },
+    { facilityId: facility.id, departmentId: department.id, bedNumber: 'DEMO-01', ward: 'Demo Medical Ward', type: 'GENERAL', status: 'OCCUPIED', currentPatientId: patient.id },
+  );
+  const admission = await findOrCreate(
+    prisma.admission,
+    { facilityId: facility.id, patientId: patient.id, notes: '[Sample journey] Nurse completed the admission after the doctor order.' },
+    {
+      facilityId: facility.id,
+      patientId: patient.id,
+      bedId: bed.id,
+      admittedById: nurse.id,
+      caseId: consultation.id,
+      admittedAt: atHoursAgo(6),
+      diagnosis: 'Blood pressure observation and medicine review (synthetic example)',
+      notes: '[Sample journey] Nurse completed the admission after the doctor order.',
+      status: 'ADMITTED',
+    },
+  );
+  await prisma.patient.update({ where: { id: patient.id }, data: { status: 'IN_PATIENT' } });
+
+  const handover = await findOrCreate(
+    prisma.handoverNote,
+    { facilityId: facility.id, patientId: patient.id, situation: 'Sample: Admitted for blood pressure observation and medicine review.' },
+    {
+      facilityId: facility.id,
+      patientId: patient.id,
+      departmentId: department.id,
+      authorId: nurse.id,
+      shift: 'MORNING',
+      shiftDate: new Date(),
+      situation: 'Sample: Admitted for blood pressure observation and medicine review.',
+      background: 'Known hypertension with interrupted medicine supply.',
+      assessment: 'Stable; fluid balance improving; no emergency symptom reported.',
+      recommendation: 'Continue ordered observations, administer medicines as charted and escalate new symptoms or urine output below target.',
+      outstandingTasks: ['Review renal profile', 'Continue hourly fluid balance', 'Confirm follow-up appointment'],
+      acknowledgedById: nurse.id,
+      acknowledgedAt: atHoursAgo(1),
+    },
+  );
+
+  const message = await findOrCreate(
+    prisma.message,
+    { facilityId: facility.id, patientId: patient.id, subject: 'Sample: Monitoring update for review' },
+    {
+      facilityId: facility.id,
+      senderId: nurse.id,
+      recipientId: doctor.id,
+      patientId: patient.id,
+      subject: 'Sample: Monitoring update for review',
+      body: 'Urine output is above the ordered target on the latest check. Please review the completed renal profile when convenient.',
+      priority: 'NORMAL',
+      readAt: atHoursAgo(1),
+      createdAt: atHoursAgo(1.5),
+    },
+  );
+
+  const invoiceNumber = `DEMO-${String(facility.id).replaceAll('-', '').slice(0, 8).toUpperCase()}-001`;
+  const invoice = await findOrCreate(
+    prisma.invoice,
+    { invoiceNumber },
+    {
+      facilityId: facility.id,
+      patientId: patient.id,
+      appointmentId: appointment.id,
+      invoiceNumber,
+      items: [
+        { description: 'Sample consultation', amount: 3000 },
+        { description: 'Sample diagnostics package', amount: 5000 },
+      ],
+      subtotal: 8000,
+      total: 8000,
+      amountPaid: 8000,
+      balance: 0,
+      paymentStatus: 'PAID',
+      paidAt: atHoursAgo(1),
+      notes: 'Synthetic paid invoice for the beta example.',
+    },
+  );
+  await findOrCreate(
+    prisma.payment,
+    { facilityId: facility.id, invoiceId: invoice.id, reference: `${invoiceNumber}-PAY` },
+    {
+      facilityId: facility.id,
+      invoiceId: invoice.id,
+      amount: 8000,
+      method: 'CASH',
+      reference: `${invoiceNumber}-PAY`,
+      note: 'Synthetic payment for the beta example.',
+      receivedById: nurse.id,
+      receivedAt: atHoursAgo(1),
+    },
+  );
+
+  const household = await findOrCreate(
+    prisma.household,
+    { facilityId: facility.id, name: 'Bello household (Sample)' },
+    { facilityId: facility.id, name: 'Bello household (Sample)', principalPatientId: patient.id, address: 'Synthetic address, Ibadan', phone: '08000000002', notes: 'Synthetic household example.' },
+  );
+  await prisma.patient.update({ where: { id: patient.id }, data: { householdId: household.id, relationship: 'PRINCIPAL' } });
+  const insurance = await findOrCreate(
+    prisma.insurance,
+    { facilityId: facility.id, patientId: patient.id, policyNumber: `DEMO-${String(facility.id).slice(0, 6).toUpperCase()}` },
+    {
+      facilityId: facility.id,
+      patientId: patient.id,
+      provider: 'Awibi Demo Health Plan',
+      planName: 'Sample family cover',
+      policyNumber: `DEMO-${String(facility.id).slice(0, 6).toUpperCase()}`,
+      principalInsured: true,
+      coverageDetails: { Outpatient: '100%', Laboratory: '80%', Copay: 500 },
+      authorizationRequired: false,
+      isActive: true,
+      notes: 'Synthetic insurance record.',
+    },
+  );
+  const affiliate = await findOrCreate(
+    prisma.affiliate,
+    { facilityId: facility.id, name: 'Awibi Demo Imaging Partner' },
+    { facilityId: facility.id, name: 'Awibi Demo Imaging Partner', type: 'IMAGING', contactName: 'Demo Desk', phone: '08000000003', email: 'partner@awibi.test', address: 'Synthetic diagnostic centre, Ibadan', notes: 'Synthetic referral partner.', isActive: true },
+  );
+
+  return {
+    facility: facility.name,
+    patientId: patient.id,
+    healthId: patient.universalPatientId,
+    sheetId: sheet.id,
+    orderId: order.id,
+    activePrescriptionId: activePrescription.id,
+    caseId: consultation.id,
+    appointmentId: appointment.id,
+    admissionId: admission.id,
+    handoverId: handover.id,
+    messageId: message.id,
+    invoiceId: invoice.id,
+    householdId: household.id,
+    insuranceId: insurance.id,
+    affiliateId: affiliate.id,
+    diagnosticIds: diagnosticsResults.map((item) => item.id),
+  };
 }
 
 async function seedShowcases(prisma, facilities) {

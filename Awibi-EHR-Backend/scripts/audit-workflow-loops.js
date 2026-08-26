@@ -50,7 +50,7 @@ const step = (loop, label, passed, detail = '') => {
   };
 
   const patients = (await call('GET', '/patients?limit=5', T.records)).d.patients;
-  const patient = patients.find((p) => !p.isEmergencyTemp);
+  let patient = patients.find((p) => !p.isEmergencyTemp);
   const cleanup = [];
 
   // ── 1. Registration → chart → discharge ───────────────────────────────────
@@ -62,6 +62,10 @@ const step = (loop, label, passed, detail = '') => {
   step('registration', 'a chart number is issued at once', Boolean(reg.d?.mrn), reg.d?.mrn);
   step('registration', 'the patient is findable by that number',
     (await call('GET', `/patients?search=${encodeURIComponent(reg.d?.mrn || 'x')}`, T.records)).d?.patients?.length > 0);
+  // Every remaining loop uses the patient created by this run. Selecting an
+  // arbitrary existing patient made the audit collide with valid active demo
+  // admissions and fail on the safety rule that prevents double admission.
+  if (reg.d?.id) patient = reg.d;
   if (reg.d?.id) cleanup.push(() => call('DELETE', `/patients/${reg.d.id}`, T.records));
 
   // ── 2. Encounter → sign → immutable ──────────────────────────────────────

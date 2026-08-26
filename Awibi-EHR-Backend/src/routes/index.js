@@ -38,6 +38,7 @@ router.use('/paystack',   require('./paystack'));
 router.use('/consent',    require('./consent'));
 
 router.use('/contact',   require('./contact'));
+router.use('/showcase',  require('./showcase'));
 
 router.get('/health', async (req, res) => {
   const startedAt = Date.now();
