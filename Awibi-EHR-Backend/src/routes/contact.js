@@ -16,6 +16,15 @@ router.post('/', contactLimiter, async (req, res, next) => {
     if (!firstName || !email || !message) {
       return res.status(400).json({ error: 'firstName, email, and message are required.' });
     }
+    if (!/^\S+@\S+\.\S+$/.test(String(email)) || String(email).length > 254) {
+      return res.status(400).json({ error: 'Enter a valid email address.', field: 'email' });
+    }
+    if (String(firstName).length > 80 || String(lastName || '').length > 80 || String(phone || '').length > 40) {
+      return res.status(400).json({ error: 'One of the contact details is too long.' });
+    }
+    if (String(subject || '').length > 120 || String(message).length > 5000) {
+      return res.status(400).json({ error: 'Keep the subject under 120 characters and the message under 5,000 characters.' });
+    }
 
     const adminEmail = process.env.MAIL_USERNAME || 'awibihealth@gmail.com';
 
@@ -40,29 +49,38 @@ router.post('/', contactLimiter, async (req, res, next) => {
       `,
     });
 
-    // Send confirmation to sender
-    await sendMail({
-      to: email,
-      subject: `We received your message — Awibi Health`,
-      html: `
-        <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-          <h2 style="color:#0B1F66">Thanks for reaching out, ${esc(firstName)}!</h2>
-          <p style="color:#4b5563;line-height:1.6">We've received your message and will get back to you within 24–48 hours.</p>
-          <p style="color:#4b5563;line-height:1.6">In the meantime, you can also reach us at:</p>
-          <ul style="color:#4b5563">
-            <li>📞 <a href="tel:+2348177790294">+2348177790294</a></li>
-            <li>💬 <a href="https://wa.me/2348177790294">WhatsApp</a></li>
-          </ul>
-          <p style="color:#9ca3af;font-size:12px;margin-top:24px">Awibi Health — Simplifying Healthcare Records in Africa</p>
-        </div>
-      `,
-    });
+    // A confirmation failure must not erase the fact that the Awibi inbox has
+    // already received the enquiry. Log it separately and return the truthful
+    // delivery result to the sender.
+    let confirmationSent = true;
+    try {
+      await sendMail({
+        to: email,
+        subject: `We received your message — Awibi Health`,
+        html: `
+          <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+            <h2 style="color:#0B1F66">Thanks for reaching out, ${esc(firstName)}!</h2>
+            <p style="color:#4b5563;line-height:1.6">We've received your message and will get back to you within 24–48 hours.</p>
+            <p style="color:#4b5563;line-height:1.6">In the meantime, you can also reach us at:</p>
+            <ul style="color:#4b5563">
+              <li>📞 <a href="tel:+2348177790294">+2348177790294</a></li>
+              <li>💬 <a href="https://wa.me/2348177790294">WhatsApp</a></li>
+            </ul>
+            <p style="color:#9ca3af;font-size:12px;margin-top:24px">Awibi Health — Simplifying Healthcare Records in Africa</p>
+          </div>
+        `,
+      });
+    } catch (confirmationError) {
+      confirmationSent = false;
+      console.error('[contact] confirmation email error:', confirmationError.message);
+    }
 
-    res.json({ success: true, message: 'Message received. We\'ll be in touch soon!' });
+    res.json({ success: true, confirmationSent, message: 'Message delivered to the Awibi team. We\'ll be in touch soon!' });
   } catch (err) {
-    // Don't fail the request if email sending fails in dev
     console.error('[contact] email error:', err.message);
-    res.json({ success: true, message: 'Message received. We\'ll be in touch soon!' });
+    res.status(503).json({
+      error: 'We could not deliver your message just now. Please email awibihealth@gmail.com or use WhatsApp.',
+    });
   }
 });
 
