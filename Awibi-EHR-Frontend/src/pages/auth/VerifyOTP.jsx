@@ -5,7 +5,6 @@ import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import { setCredentials } from '@/store/authSlice';
-import useAuthStore from '@/stores/authStore';
 import { Button } from '@/components/ui/button';
 
 export default function VerifyOTP() {
@@ -16,8 +15,6 @@ export default function VerifyOTP() {
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
   const refs = useRef([]);
-  const setAuth = useAuthStore((s) => s.setAuth);
-
   const handleChange = (i, v) => {
     if (!/^\d*$/.test(v)) return;
     const next = [...otp];
@@ -39,7 +36,6 @@ export default function VerifyOTP() {
       const { data } = await api.post('/auth/verify-otp', { email, otp: code });
       if (data.accessToken) localStorage.setItem('accessToken', data.accessToken);
       dispatch(setCredentials({ user: data.user, facility: data.facility ?? null, subscription: data.subscription ?? null }));
-      setAuth({ user: data.user, facility: data.facility ?? null, subscription: data.subscription ?? null });
       navigate('/dashboard');
     } catch (err) {
       toast.error(err.response?.data?.error || 'Invalid or expired OTP');

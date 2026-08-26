@@ -9,8 +9,13 @@ const rateLimit = require('express-rate-limit');
 const passport = require('./config/passport');
 const routes = require('./routes');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
+const { requestContext } = require('./middleware/requestContext');
 
 const app = express();
+
+// Give every response and server log one non-PHI identifier so a reported
+// error can be traced without copying patient data into support messages.
+app.use(requestContext);
 
 // Trust proxy (for rate limiting behind Nginx/Railway/etc.)
 app.set('trust proxy', 1);
@@ -73,14 +78,20 @@ if (process.env.NODE_ENV === 'production') {
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many requests' } }));
 
 // ── Parsers ─────────────────────────────────────────────────────────────────
-// Note: Paystack webhook needs raw body — mount before json()
-app.use('/v1/billing/paystack-webhook', express.raw({ type: 'application/json' }));
+// Paystack signatures cover the exact request bytes. Both legacy and current
+// webhook URLs therefore receive a Buffer before the general JSON parser.
+app.use([
+  '/v1/billing/paystack-webhook',
+  '/v1/paystack/webhook',
+], express.raw({ type: 'application/json', limit: '1mb' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 // ── Logging ─────────────────────────────────────────────────────────────────
-if (process.env.NODE_ENV !== 'test') app.use(morgan('dev'));
+// requestContext emits one structured completion record for every request.
+// Keep the compact development line for local readability only.
+if (process.env.NODE_ENV === 'development') app.use(morgan('dev'));
 
 // ── Passport ────────────────────────────────────────────────────────────────
 app.use(passport.initialize());

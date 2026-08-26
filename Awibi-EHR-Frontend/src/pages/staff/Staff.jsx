@@ -2,11 +2,11 @@ import React, { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Edit2, Shield, ShieldOff, Eye, EyeOff, CreditCard, Printer } from 'lucide-react';
 import { toast } from 'sonner';
+import { useSelector } from 'react-redux';
 import api from '@/lib/api';
 import Avatar from '@/components/ui/Avatar';
 import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
-import useAuthStore from '@/stores/authStore';
 
 const ROLES = ['ADMIN', 'CLINICIAN', 'RECORDS'];
 const SUB_ROLES = [
@@ -23,7 +23,7 @@ const ROLE_COLOR = {
 
 export default function Staff() {
   const qc = useQueryClient();
-  const facility = useAuthStore(s => s.facility);
+  const facility = useSelector((state) => state.auth.facility);
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);   // null | 'add' | staff object (edit)
   const [cardStaff, setCardStaff] = useState(null); // staff object for ID card

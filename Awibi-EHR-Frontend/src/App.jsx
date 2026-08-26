@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchMe, clearAuth } from './store/authSlice';
-import useAuthStore from './stores/authStore';
 import { can } from './lib/permissions';
 import { toast } from 'sonner';
 
@@ -18,7 +17,7 @@ class ErrorBoundary extends React.Component {
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             </div>
             <h2 className="text-lg font-semibold text-gray-900 mb-2">Something went wrong</h2>
-            <p className="text-sm text-gray-500 mb-4">{this.state.error?.message || 'An unexpected error occurred.'}</p>
+            <p className="text-sm text-gray-500 mb-4">Awibi EHR could not start safely. Reload the page; if it happens again, contact support.</p>
             <button onClick={() => window.location.reload()} className="px-4 py-2 bg-[#335CF4] text-white text-sm rounded-lg hover:bg-blue-700 transition-colors">
               Reload page
             </button>
@@ -42,49 +41,52 @@ import ResetPassword from './pages/auth/ResetPassword';
 import VerifyOTP from './pages/auth/VerifyOTP';
 import GoogleCallback from './pages/auth/GoogleCallback';
 
-// Dashboard pages
-import Overview from './pages/dashboard/Overview';
-import Patients from './pages/patients/Patients';
-import PatientDetail from './pages/patients/PatientDetail';
-import PatientIDCard from './pages/patients/PatientIDCard';
-import AddPatient from './pages/patients/AddPatient';
-import Appointments from './pages/appointments/Appointments';
-import Cases from './pages/cases/Cases';
-import CaseDetail from './pages/cases/CaseDetail';
-import NewEncounter from './pages/cases/NewEncounter';
-import Lab from './pages/lab/Lab';
-import PlatformOverview from './pages/platform/PlatformOverview';
-import PlatformFacilities from './pages/platform/PlatformFacilities';
-import PlatformPayments from './pages/platform/PlatformPayments';
-import PlatformSubscriptions from './pages/platform/PlatformSubscriptions';
-import Monitoring from './pages/nursing/Monitoring';
-import Worklist from './pages/nursing/Worklist';
-import Emergency from './pages/emergency/Emergency';
-import Bookings from './pages/bookings/Bookings';
-import Inquiries from './pages/bookings/Inquiries';
-import Messages from './pages/messages/Messages';
-import Scout from './pages/scout/Scout';
-import Households from './pages/households/Households';
-import InsurancePage from './pages/insurance/Insurance';
+// Dashboard pages load on demand. A receptionist opening Patient records should
+// not first download Diagnostics, charts, pharmacy and every admin module.
+// AppShell owns the Suspense fallback so navigation remains visible while a
+// route chunk arrives on a slow connection.
+const Overview = React.lazy(() => import('./pages/dashboard/Overview'));
+const Patients = React.lazy(() => import('./pages/patients/Patients'));
+const PatientDetail = React.lazy(() => import('./pages/patients/PatientDetail'));
+const PatientIDCard = React.lazy(() => import('./pages/patients/PatientIDCard'));
+const AddPatient = React.lazy(() => import('./pages/patients/AddPatient'));
+const Appointments = React.lazy(() => import('./pages/appointments/Appointments'));
+const Cases = React.lazy(() => import('./pages/cases/Cases'));
+const CaseDetail = React.lazy(() => import('./pages/cases/CaseDetail'));
+const NewEncounter = React.lazy(() => import('./pages/cases/NewEncounter'));
+const Lab = React.lazy(() => import('./pages/lab/Lab'));
+const PlatformOverview = React.lazy(() => import('./pages/platform/PlatformOverview'));
+const PlatformFacilities = React.lazy(() => import('./pages/platform/PlatformFacilities'));
+const PlatformPayments = React.lazy(() => import('./pages/platform/PlatformPayments'));
+const PlatformSubscriptions = React.lazy(() => import('./pages/platform/PlatformSubscriptions'));
+const Monitoring = React.lazy(() => import('./pages/nursing/Monitoring'));
+const Worklist = React.lazy(() => import('./pages/nursing/Worklist'));
+const Emergency = React.lazy(() => import('./pages/emergency/Emergency'));
+const Bookings = React.lazy(() => import('./pages/bookings/Bookings'));
+const Inquiries = React.lazy(() => import('./pages/bookings/Inquiries'));
+const Messages = React.lazy(() => import('./pages/messages/Messages'));
+const Scout = React.lazy(() => import('./pages/scout/Scout'));
+const Households = React.lazy(() => import('./pages/households/Households'));
+const InsurancePage = React.lazy(() => import('./pages/insurance/Insurance'));
 import ClinicLanding from './pages/public/ClinicLanding';
-import MonitoringSheet from './pages/nursing/MonitoringSheet';
-import DrugChart from './pages/nursing/DrugChart';
-import Handover from './pages/nursing/Handover';
-import Orders from './pages/nursing/Orders';
-import ClinicalOrders from './pages/orders/ClinicalOrders';
-import Pharmacy from './pages/pharmacy/Pharmacy';
-import EmergencyBoard from './pages/emergency/EmergencyBoard';
-import PatientMonitoringOverview from './pages/nursing/PatientMonitoringOverview';
-import Departments from './pages/departments/Departments';
-import Staff from './pages/staff/Staff';
-import Billing from './pages/billing/Billing';
-import Reports from './pages/reports/Reports';
-import Subscription from './pages/subscription/Subscription';
-import Settings from './pages/settings/Settings';
-import EncounterTypes from './pages/settings/EncounterTypes';
-import Admissions from './pages/admissions/Admissions';
-import Support from './pages/support/Support';
-import Affiliates from './pages/affiliates/Affiliates';
+const MonitoringSheet = React.lazy(() => import('./pages/nursing/MonitoringSheet'));
+const DrugChart = React.lazy(() => import('./pages/nursing/DrugChart'));
+const Handover = React.lazy(() => import('./pages/nursing/Handover'));
+const Orders = React.lazy(() => import('./pages/nursing/Orders'));
+const ClinicalOrders = React.lazy(() => import('./pages/orders/ClinicalOrders'));
+const Pharmacy = React.lazy(() => import('./pages/pharmacy/Pharmacy'));
+const EmergencyBoard = React.lazy(() => import('./pages/emergency/EmergencyBoard'));
+const PatientMonitoringOverview = React.lazy(() => import('./pages/nursing/PatientMonitoringOverview'));
+const Departments = React.lazy(() => import('./pages/departments/Departments'));
+const Staff = React.lazy(() => import('./pages/staff/Staff'));
+const Billing = React.lazy(() => import('./pages/billing/Billing'));
+const Reports = React.lazy(() => import('./pages/reports/Reports'));
+const Subscription = React.lazy(() => import('./pages/subscription/Subscription'));
+const Settings = React.lazy(() => import('./pages/settings/Settings'));
+const EncounterTypes = React.lazy(() => import('./pages/settings/EncounterTypes'));
+const Admissions = React.lazy(() => import('./pages/admissions/Admissions'));
+const Support = React.lazy(() => import('./pages/support/Support'));
+const Affiliates = React.lazy(() => import('./pages/affiliates/Affiliates'));
 import Unauthorized from './pages/errors/Unauthorized';
 import NotFound from './pages/errors/NotFound';
 
@@ -154,14 +156,12 @@ function DashboardHome() {
 
 export default function App() {
   const dispatch = useDispatch();
-  const setAuth = useAuthStore((s) => s.setAuth);
   const token = localStorage.getItem('accessToken');
 
   useEffect(() => {
     if (token) {
       dispatch(fetchMe())
         .unwrap()
-        .then(({ user, facility, subscription }) => setAuth({ user, facility, subscription }))
         .catch((err) => {
           const msg = err?.error || '';
           if (msg.includes('timeout') || msg.includes('Network Error')) {

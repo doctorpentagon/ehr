@@ -5,7 +5,6 @@ import { Loader2, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import { setCredentials } from '@/store/authSlice';
-import useAuthStore from '@/stores/authStore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { PasswordInput } from '@/components/ui/password-input';
@@ -35,13 +34,14 @@ export default function Register() {
     orgName: '', facilityType: derivedType, phone: '',
   });
   const [loading, setLoading] = useState(false);
-  const setAuth = useAuthStore((s) => s.setAuth);
-
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   const submit = async (e) => {
     e.preventDefault();
-    if (form.password.length < 8) { toast.error('Password must be at least 8 characters'); return; }
+    if (!(form.password.length >= 12 && /[a-z]/.test(form.password) && /[A-Z]/.test(form.password) && /\d/.test(form.password) && /[^A-Za-z0-9]/.test(form.password))) {
+      toast.error('Use at least 12 characters with upper, lower, number and symbol');
+      return;
+    }
     setLoading(true);
     try {
       const { data } = await api.post('/auth/register', {
@@ -56,7 +56,6 @@ export default function Register() {
       } else {
         if (data.accessToken) localStorage.setItem('accessToken', data.accessToken);
         dispatch(setCredentials({ user: data.user, facility: data.facility }));
-        setAuth({ user: data.user, facility: data.facility });
         navigate('/dashboard');
       }
     } catch (err) {

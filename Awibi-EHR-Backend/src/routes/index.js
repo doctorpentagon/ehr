@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { prisma } = require('../utils/database');
 
 router.use('/auth', require('./auth'));
 router.use('/overview', require('./overview'));
@@ -38,6 +39,25 @@ router.use('/consent',    require('./consent'));
 
 router.use('/contact',   require('./contact'));
 
-router.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
+router.get('/health', async (req, res) => {
+  const startedAt = Date.now();
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({
+      status: 'ok',
+      database: 'connected',
+      latencyMs: Date.now() - startedAt,
+      time: new Date().toISOString(),
+    });
+  } catch (error) {
+    // Do not disclose connection strings, hostnames or driver errors publicly.
+    res.status(503).json({
+      status: 'degraded',
+      database: 'unavailable',
+      latencyMs: Date.now() - startedAt,
+      requestId: req.id,
+    });
+  }
+});
 
 module.exports = router;

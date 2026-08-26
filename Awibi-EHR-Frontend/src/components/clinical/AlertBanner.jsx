@@ -4,8 +4,9 @@ import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
+import { useSelector } from 'react-redux';
 import api from '@/lib/api';
-import useAuthStore from '@/stores/authStore';
+import { can } from '@/lib/permissions';
 
 const SEVERITY_STYLE = {
   CRITICAL: { border: 'border-red-300', bg: 'bg-red-50', dot: 'bg-red-600', text: 'text-red-900' },
@@ -24,8 +25,8 @@ export default function AlertBanner() {
   const [notes, setNotes] = useState({});
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const can = useAuthStore(state => state.can);
-  const canRespond = can('clinical_write');
+  const user = useSelector((state) => state.auth.user);
+  const canRespond = can(user?.role, user?.subRole, 'clinical_write');
 
   const { data } = useQuery({
     queryKey: ['clinical-alerts'],

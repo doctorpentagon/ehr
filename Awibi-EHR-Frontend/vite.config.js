@@ -35,7 +35,7 @@ export default defineConfig({
           if (pkg === 'recharts' || pkg.startsWith('d3-') || pkg === 'victory-vendor') return 'charts';
           if (['react', 'react-dom', 'scheduler', 'react-router', 'react-router-dom', '@remix-run/router']
             .includes(pkg)) return 'react';
-          if (pkg.startsWith('@tanstack') || pkg.includes('redux') || pkg === 'zustand') return 'state';
+          if (pkg.startsWith('@tanstack') || pkg.includes('redux')) return 'state';
           if (pkg === 'lucide-react' || pkg.startsWith('@tabler')) return 'icons';
           return 'vendor';
         },

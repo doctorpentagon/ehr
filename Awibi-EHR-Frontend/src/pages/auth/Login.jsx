@@ -7,16 +7,13 @@ import { z } from 'zod';
 import { Loader2, PlayCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { demoLogin, login } from '@/store/authSlice';
-import api from '@/lib/api';
+import api, { resolveBaseUrl } from '@/lib/api';
 import { roleLabel } from '@/lib/permissions';
-import useAuthStore from '@/stores/authStore';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 const emailSchema = z.object({
   email: z.string().email({ message: 'Enter a valid email address' }),
@@ -112,12 +109,9 @@ export default function Login() {
     formState: { errors: staffErrors },
   } = useForm({ resolver: zodResolver(staffSchema), defaultValues: { staffEmail: '', staffPassword: '' } });
 
-  const setAuth = useAuthStore((s) => s.setAuth);
-
   const doLogin = async ({ email, password }) => {
     try {
       const result = await dispatch(login({ email, password })).unwrap();
-      setAuth({ user: result.user, facility: result.facility });
       const home = result.user?.role === 'SUPER_ADMIN' ? '/dashboard/platform' : '/dashboard';
       navigate(result.user?.mustChangePassword ? '/dashboard/settings?passwordChange=required' : home, { replace: true });
     } catch (err) {
@@ -142,7 +136,6 @@ export default function Login() {
         userId: demoAccountId,
         ...(demoMeta.requiresAccessCode ? { accessCode } : {}),
       })).unwrap();
-      setAuth({ user: result.user, facility: result.facility });
       navigate(result.user?.role === 'SUPER_ADMIN' ? '/dashboard/platform' : '/dashboard', { replace: true });
     } catch (err) {
       // Name which of the two things went wrong rather than one vague message.
@@ -158,7 +151,7 @@ export default function Login() {
   const onStaffSubmit = (v) => doLogin({ email: v.staffEmail, password: v.staffPassword });
 
   const handleGoogleLogin = () => {
-    window.location.href = `${API_URL}/v1/auth/google`;
+    window.location.href = `${resolveBaseUrl()}/auth/google`;
   };
 
   const [searchParams] = useSearchParams();

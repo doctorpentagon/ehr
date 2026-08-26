@@ -3,11 +3,12 @@ const { Strategy: JwtStrategy, ExtractJwt } = require('passport-jwt');
 const { Strategy: LocalStrategy } = require('passport-local');
 const bcrypt = require('bcryptjs');
 const { prisma } = require('../utils/database');
+const { JWT_SECRET } = require('./jwt');
 
 // ── JWT ────────────────────────────────────────────────────────────────────────
 passport.use(new JwtStrategy({
   jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-  secretOrKey: process.env.JWT_SECRET || 'awibi-secret',
+  secretOrKey: JWT_SECRET,
 }, async (payload, done) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: payload.userId } });

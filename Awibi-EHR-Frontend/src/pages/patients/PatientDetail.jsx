@@ -7,12 +7,13 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { useSelector } from 'react-redux';
 import api from '@/lib/api';
 import StatusBadge from '@/components/ui/StatusBadge';
 import Avatar from '@/components/ui/Avatar';
 import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
-import useAuthStore from '@/stores/authStore';
+import { can as hasPermission } from '@/lib/permissions';
 import VitalsTrendChart from '@/components/clinical/VitalsTrendChart';
 
 const TABS = [
@@ -36,13 +37,14 @@ export default function PatientDetail() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
-  const can = useAuthStore(s => s.can);
-  const canWriteVitals = can('vitals_write');
-  const canWriteClinical = can('clinical_write');
-  const canWritePrescriptions = can('prescriptions_write');
-  const canCreateCases = can('clinical_write');
-  const canRequestLab = can('diagnostic_order');
-  const canManageIdentity = can('patient_demographics_write');
+  const user = useSelector((state) => state.auth.user);
+  const allowed = (module) => hasPermission(user?.role, user?.subRole, module);
+  const canWriteVitals = allowed('vitals_write');
+  const canWriteClinical = allowed('clinical_write');
+  const canWritePrescriptions = allowed('prescriptions_write');
+  const canCreateCases = allowed('clinical_write');
+  const canRequestLab = allowed('diagnostic_order');
+  const canManageIdentity = allowed('patient_demographics_write');
   const requestedTab = searchParams.get('tab');
   const [tab, setTab] = useState(TABS.some(item => item.key === requestedTab) ? requestedTab : 'Overview');
   const [vitalOpen, setVitalOpen] = useState(false);

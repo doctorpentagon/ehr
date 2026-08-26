@@ -17,7 +17,7 @@ import { offlineOwnerKeyFromToken } from './offlinePolicy';
  * VITE_API_URL is set at build time and may or may not already end in /v1, so
  * normalise rather than trusting whoever typed it into the dashboard.
  */
-function resolveBaseUrl() {
+export function resolveBaseUrl() {
   const configured = import.meta.env.VITE_API_URL;
   if (!configured) return '/v1';
   const trimmed = configured.replace(/\/+$/, '');

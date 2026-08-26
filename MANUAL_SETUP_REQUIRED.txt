@@ -1,8 +1,19 @@
 AWIBI EHR + AWIBI IDENTITY — MANUAL / EXTERNAL SETUP REQUIRED
-Last updated: 16 August 2026 (Africa/Lagos)
+Last updated: 26 August 2026 (Africa/Lagos)
 
 PURPOSE
 This file contains work that cannot be made production-complete by local source code alone. Do not place passwords, API keys, NINs, patient data, certificates, or private database URLs in this file or in Git.
+
+CRITICAL NEXT SETUPS FROM THE 26 AUGUST AUDIT
+[ ] Approve and test the access-token HttpOnly-cookie/session migration as one change, including CSRF, CORS, Google login, demo access and offline behaviour. Do not switch one side alone.
+[ ] Put frontend and API under an approved same-site production domain where possible; verify Secure cookies, exact CORS and the deployed CSP against the final API hostname.
+[ ] Use persistent production hosting and database plans; configure uptime/error monitoring and prove restart, backup and restore behaviour.
+[ ] Complete the NDPA legal review, DPIA, privacy notice, retention/data-residency decisions and patient-rights process before real patient data.
+[ ] Replace `prisma db push` with reviewed versioned migrations and roll out/test PostgreSQL RLS table by table.
+[ ] Supply square 192x192 and 512x512 maskable Awibi icons and re-test installation on Android.
+[ ] Complete the append-only audit governance/viewer, correlation, export access, retention and alert-review workflow.
+[ ] Run independent penetration, WCAG/accessibility, load/soak and low-cost Android 2G/3G tests; close or explicitly accept every critical/high finding.
+[ ] Enable and protect the GitHub quality workflow and require its backend/frontend jobs before release merges.
 
 1. RELEASE OWNERSHIP AND CLINICAL GOVERNANCE
 [ ] Name a release owner, clinical safety officer, data protection officer, security owner, diagnostics owner, pharmacy owner, and incident commander.

@@ -16,7 +16,6 @@ require('dotenv').config();
 process.env.TZ = process.env.TZ || 'Africa/Lagos';
 
 const { connectDatabase } = require('./utils/database');
-const app = require('./app');
 
 const PORT = process.env.PORT || 8000;
 
@@ -82,6 +81,9 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 async function start() {
+  // Load the application only after production environment guards pass. This
+  // keeps missing-secret failures explicit instead of failing during imports.
+  const app = require('./app');
   await connectDatabase();
   app.listen(PORT, () => {
     console.log('');

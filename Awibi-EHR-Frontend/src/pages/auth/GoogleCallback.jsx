@@ -2,14 +2,12 @@ import { useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
 import { fetchMe } from '@/store/authSlice';
-import useAuthStore from '@/stores/authStore';
 import { Loader2 } from 'lucide-react';
 
 export default function GoogleCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const dispatch = useDispatch();
-  const setAuth = useAuthStore((s) => s.setAuth);
   const ran = useRef(false);
 
   useEffect(() => {
@@ -29,7 +27,6 @@ export default function GoogleCallback() {
     dispatch(fetchMe())
       .unwrap()
       .then(({ user, facility, subscription }) => {
-        setAuth({ user, facility, subscription });
         navigate(user?.role === 'SUPER_ADMIN' ? '/dashboard/platform' : '/dashboard', { replace: true });
       })
       .catch(() => {

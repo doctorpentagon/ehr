@@ -197,7 +197,7 @@ router.post('/:id/pay', auth, async (req, res, next) => {
   try {
     const inv = await prisma.invoice.findFirst({ where: { id: req.params.id, facilityId: req.ctx.facilityId } });
     if (!inv) return res.status(404).json({ error: 'Invoice not found' });
-    const ref = `AWB-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+    const ref = `AWB-${Date.now()}-${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
     res.json({ reference: ref, amount: Math.round(Number(inv.balance) * 100), currency: 'NGN', invoiceId: inv.id });
   } catch (e) { next(e); }
 });
@@ -205,8 +205,13 @@ router.post('/:id/pay', auth, async (req, res, next) => {
 router.post('/paystack-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const secret = process.env.PAYSTACK_SECRET_KEY;
   const sig = req.headers['x-paystack-signature'];
+  if (!secret || !sig || !Buffer.isBuffer(req.body)) return res.status(401).end();
   const hash = crypto.createHmac('sha512', secret).update(req.body).digest('hex');
-  if (hash !== sig) return res.status(401).end();
+  const expected = Buffer.from(hash, 'hex');
+  const received = Buffer.from(String(sig), 'hex');
+  if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) {
+    return res.status(401).end();
+  }
   try {
     const event = JSON.parse(req.body);
     if (event.event === 'charge.success') {

@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { prisma } = require('../utils/database');
+const { JWT_SECRET } = require('../config/jwt');
 
 async function authenticate(req, res, next) {
   try {
@@ -8,7 +9,7 @@ async function authenticate(req, res, next) {
       return res.status(401).json({ error: 'No token provided' });
     }
     const token = header.slice(7);
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const payload = jwt.verify(token, JWT_SECRET);
     const user = await prisma.user.findUnique({
       where: { id: payload.userId },
       include: {
@@ -47,7 +48,7 @@ async function optionalAuth(req, res, next) {
     const header = req.headers.authorization;
     if (header && header.startsWith('Bearer ')) {
       const token = header.slice(7);
-      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      const payload = jwt.verify(token, JWT_SECRET);
       const user = await prisma.user.findUnique({ where: { id: payload.userId } });
       if (user) {
         req.user = user;

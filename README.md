@@ -4,7 +4,7 @@
 
 **Stack:** React · Vite · Node.js · Express · Prisma · PostgreSQL · JWT · Google OAuth · Paystack
 
-**Release position (23 August 2026):** suitable for controlled, synthetic-data beta testing only. It is not approved for real patient data, national deployment, full offline clinical use, or a claim of complete interoperability. See [PRE_BETA_RELEASE_GATE_2026-08-23.md](PRE_BETA_RELEASE_GATE_2026-08-23.md), [BETA_FEEDBACK_MASTER_CHECKLIST.md](BETA_FEEDBACK_MASTER_CHECKLIST.md), and `MANUAL_SETUP_REQUIRED.txt`.
+**Release position (26 August 2026):** suitable for controlled, synthetic-data beta testing only. It is not approved for real patient data, national deployment, full offline clinical use, or a claim of complete interoperability. See [CODE_QUALITY_AUDIT_RECONCILIATION_2026-08-26.md](CODE_QUALITY_AUDIT_RECONCILIATION_2026-08-26.md), [PRE_BETA_RELEASE_GATE_2026-08-23.md](PRE_BETA_RELEASE_GATE_2026-08-23.md), and `MANUAL_SETUP_REQUIRED.txt`.
 
 ---
 
@@ -51,7 +51,7 @@ Identity Frontend (5178) → Identity Backend (8001)
 |---------|--------|------|------|
 | **EHR Backend** | `Awibi-EHR-Backend/` | **8000** | Node.js · Express · Prisma · PostgreSQL |
 | **Identity Backend** | `Awibi-Identity-Backend/` | **8001** | Separate product; local development copy may be present |
-| **EHR Frontend** | `Awibi-EHR-Frontend/` | **5177** | React 18 · Vite 5 · Tailwind · Redux · Zustand |
+| **EHR Frontend** | `Awibi-EHR-Frontend/` | **5177** | React · Vite 5 · Tailwind · Redux |
 | **Identity Frontend** | `Awibi-Identity-Frontend/` | **5178** | React 18 · Vite 5 · Tailwind |
 | **Landing Page** | `Awibi-EHR-Landing-main/` | **5176** | React 18 · Vite 5 · Tailwind |
 
@@ -395,9 +395,10 @@ POST /v1/identity/verify-nin
 
 ### Authentication & Tokens
 - JWT (15m) + httpOnly refresh cookie (7d, `secure: true` in production)
-- Token rotation on every refresh — stolen token invalidated on next use
+- Refresh-token rotation on every refresh; newly issued refresh tokens are stored as SHA-256 digests rather than reusable plaintext
 - bcrypt 12 rounds for password hashing
-- OTPs and reset tokens stored in DB only; cleared after use
+- Cryptographically generated OTPs are stored as digests and cleared after use
+- New facility registrations require at least 12 characters with upper, lower, number, and symbol
 
 ### Authorization
 - Every clinical route: `authenticate → tenant → requirePermission`
@@ -419,7 +420,9 @@ POST /v1/identity/verify-nin
 - Prisma ORM — parameterized queries (no SQL injection)
 - HTML escaped in email templates and print popups (`escHtml()`)
 - Helmet middleware — secure HTTP headers (CSP, HSTS, etc.)
-- Paystack webhooks: HMAC-SHA512 signature verified
+- Deployment CSP/HSTS and a CSP-safe external startup diagnostic
+- Paystack webhooks: fail-closed, constant-time HMAC-SHA512 verification over raw request bytes
+- Privacy-safe request IDs connect API responses to structured server errors without placing clinical content in support messages
 
 ### NDPA 2023 alignment status
 - `ConsentGrant`, Identity access receipts, selected clinical-write audit events, role enforcement, and facility scoping are implemented controls.
@@ -444,7 +447,7 @@ POST /v1/identity/verify-nin
 - [ ] Switch Paystack to live keys *(only when explicitly instructed)*
 - [ ] Set `FRONTEND_URL` to production domain in EHR Backend
 - [ ] Set `ALLOWED_ORIGINS` to production domain(s)
-- [ ] Upgrade Supabase to Pro plan (prevents auto-pause)
+- [ ] Use persistent PostgreSQL/API hosting with uptime monitoring; do not rely on an auto-pausing free service for clinical use
 - [ ] Enable HTTPS — refresh cookies require `secure: true` (auto-set in production)
 - [ ] Run `npx prisma migrate deploy` instead of `db push` in production
 - [ ] Set up PM2 or Docker for zero-downtime restarts
@@ -830,7 +833,7 @@ See **[NOT_BUILT.md](NOT_BUILT.md)** for the full checkable list. Summary:
 - Advanced pharmacy procurement, batch/lot/FEFO, recall/quarantine, witnessed controlled-drug and branch-transfer controls are not built
 - Facility equipment/instrument asset register is not built
 - Signed-in cross-facility booking from the Awibi Identity Portal (facility public booking already exists)
-- Playwright / Cypress end-to-end tests — the browser layer is the one substantial untested surface
+- Repeatable automated browser E2E coverage in CI remains incomplete; the 26 August release was manually exercised in the in-app browser across login, orders, diagnostics, monitoring, pharmacy, admissions and patient records
 - WHO weight-for-age, height-for-age and weight-for-height tables remain unbundled; BMI-for-age is now complete from birth through 19 years
 - Per-facility timezone (process is pinned to `Africa/Lagos`; correct for Nigeria only)
 - Voice capture (placeholder only), AI triage beyond keyword mapping
@@ -842,21 +845,25 @@ See **[NOT_BUILT.md](NOT_BUILT.md)** for the full checkable list. Summary:
 ## Testing
 
 ```bash
-npm run test:unit      # 42 checks — pure logic, no server needed
-npm run test:contract  # 183 distinct frontend calls resolve across 253 backend routes
-npm run test:smoke     # 364 checks — every endpoint, every role, against a live API
-npm run test:loops     # 60 checks — each workflow from initiation to completion
+npm run test:unit      # 46 checks — pure logic and security helpers, no server needed
+npm run test:contract  # 198 distinct frontend calls resolve across 267 backend routes
+npm run test:smoke     # 365 checks — every endpoint, every role, against a live API
+npm run test:loops     # 81 checks — each workflow from initiation to completion
 npm run test:clinical-closures # 38 critical clinical lifecycle checks
+npm run test:pharmacy-care     # 32 pharmacy-care lifecycle checks
+npm run test:diagnostic-ordering # 12 detailed diagnostic-order checks
+npm run test:showcase          # 32 seeded monitoring/pharmacy sample checks
 npm run test:roles     # every screen each role is offered, actually opened
 npm run test:tenancy   # one facility's records fetched with another's token
 npm run test:all       # all seven backend suites
 ```
 
-In the frontend, `npm run build` refuses to build if either wiring check fails:
+In the frontend, `npm run build` refuses to build if a wiring or interface-copy check fails. `npm run test:unit` currently runs 19 authentication, offline, paediatric BMI and deployment-security checks:
 
 ```bash
 npm run check:imports  # an identifier used but never imported
-npm run check:routes   # a nav entry pointing at a route that does not exist
+npm run check:routes   # all 51 routes; nav targets and page wiring
+npm run check:copy     # blocked rough/internal phrases do not reach the interface
 ```
 
 The loop audit is the one worth explaining. It does not test endpoints in

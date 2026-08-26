@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
+import { toast } from 'sonner';
 import Sidebar from './Sidebar';
 import AlertBanner from '@/components/clinical/AlertBanner';
 import TopBar from './TopBar';
@@ -8,6 +9,39 @@ import OfflineBanner from '@/components/ui/OfflineBanner';
 import { logout } from '@/store/authSlice';
 
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes — shared device safety
+const IDLE_WARNING_MS = IDLE_TIMEOUT_MS - (2 * 60 * 1000);
+
+class RouteErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { failed: false }; }
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error) {
+    // Never put clinical form state or patient data into this diagnostic line.
+    console.error('Route failed to render', { route: this.props.route, message: error?.message });
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <section role="alert" className="mx-auto max-w-lg rounded-xl border border-amber-200 bg-amber-50 p-6 text-center">
+        <h1 className="text-lg font-semibold text-gray-900">This page could not open</h1>
+        <p className="mt-2 text-sm text-gray-700">The rest of Awibi EHR is still working. Try this page again or open another section.</p>
+        <button type="button" onClick={() => this.setState({ failed: false })} className="mt-4 min-h-11 rounded-lg bg-[#335CF4] px-4 py-2 text-sm font-medium text-white">
+          Try again
+        </button>
+      </section>
+    );
+  }
+}
+
+function RouteLoading() {
+  return (
+    <div role="status" aria-live="polite" className="space-y-4 py-2">
+      <span className="sr-only">Opening page</span>
+      <div className="h-8 w-48 animate-pulse rounded-md bg-gray-200" />
+      <div className="h-28 w-full animate-pulse rounded-xl bg-gray-100" />
+      <div className="h-48 w-full animate-pulse rounded-xl bg-gray-100" />
+    </div>
+  );
+}
 
 export default function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -16,10 +50,21 @@ export default function AppShell() {
   const { user } = useSelector((s) => s.auth);
   const isPlatformOperator = user?.role === 'SUPER_ADMIN';
   const navigate = useNavigate();
+  const location = useLocation();
   const idleTimer = useRef(null);
+  const idleWarningTimer = useRef(null);
 
   const resetTimer = useCallback(() => {
     clearTimeout(idleTimer.current);
+    clearTimeout(idleWarningTimer.current);
+    toast.dismiss('idle-warning');
+    idleWarningTimer.current = setTimeout(() => {
+      toast.warning('Your session will end in 2 minutes because there has been no activity.', {
+        id: 'idle-warning',
+        duration: 120000,
+        action: { label: 'Stay signed in', onClick: resetTimer },
+      });
+    }, IDLE_WARNING_MS);
     idleTimer.current = setTimeout(async () => {
       await dispatch(logout());
       navigate('/login?reason=idle', { replace: true });
@@ -32,6 +77,8 @@ export default function AppShell() {
     resetTimer();
     return () => {
       clearTimeout(idleTimer.current);
+      clearTimeout(idleWarningTimer.current);
+      toast.dismiss('idle-warning');
       events.forEach(e => window.removeEventListener(e, resetTimer));
     };
   }, [resetTimer]);
@@ -46,6 +93,9 @@ export default function AppShell() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-lg focus:bg-white focus:px-4 focus:py-3 focus:text-sm focus:font-semibold focus:text-[#1D4ED8] focus:shadow-lg">
+        Skip to main content
+      </a>
       <OfflineBanner />
       {/* Desktop sidebar */}
       <aside className={`hidden md:flex md:flex-col border-r border-sidebar-border bg-sidebar flex-shrink-0 transition-[width] duration-200 ${sidebarCollapsed ? 'md:w-20' : 'md:w-72'}`}>
@@ -79,7 +129,7 @@ export default function AppShell() {
           Padding steps 16 / 24 / 32px; the width cap stops line lengths becoming
           unreadable on a wide monitor without wasting a 13-inch laptop screen.
         */}
-        <main className="flex-1 overflow-y-auto">
+        <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto">
           {/* overflow-x-hidden is the backstop: any single wide element that
               slips through still cannot make the whole page scroll sideways,
               which is the thing that makes an app feel broken on a phone.
@@ -88,7 +138,11 @@ export default function AppShell() {
             {/* Facility-wide clinical alerts, collapsed to one line unless
                 opened — a banner that fills the screen daily stops being read. */}
             {!isPlatformOperator && <AlertBanner />}
-            <Outlet />
+            <RouteErrorBoundary key={location.pathname} route={location.pathname}>
+              <React.Suspense fallback={<RouteLoading />}>
+                <Outlet />
+              </React.Suspense>
+            </RouteErrorBoundary>
           </div>
         </main>
       </div>

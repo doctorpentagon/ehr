@@ -45,7 +45,11 @@ for (const m of nav.matchAll(/path:\s*'([^']+)'/g)) {
 }
 
 // A page imported but never rendered is a screen nobody can reach.
-for (const m of app.matchAll(/^import\s+([A-Z][A-Za-z0-9_]*)\s+from\s+'\.\/pages\/[^']+';$/gm)) {
+const pageComponents = [
+  ...app.matchAll(/^import\s+([A-Z][A-Za-z0-9_]*)\s+from\s+'\.\/pages\/[^']+';$/gm),
+  ...app.matchAll(/^const\s+([A-Z][A-Za-z0-9_]*)\s*=\s*React\.lazy\(\(\)\s*=>\s*import\('\.\/pages\/[^']+'\)\);$/gm),
+];
+for (const m of pageComponents) {
   const component = m[1];
   const rendered = new RegExp(`<${component}\\s*/?>`).test(app);
   if (!rendered) {

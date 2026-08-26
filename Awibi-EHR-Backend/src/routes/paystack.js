@@ -27,7 +27,7 @@ router.post('/initialize', billingAuth, async (req, res, next) => {
   try {
     const { amount, email, invoiceId, plan, metadata = {} } = req.body;
     if (!amount || !email) return res.status(400).json({ error: 'amount and email are required' });
-    const reference = `AWB-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const reference = `AWB-${Date.now()}-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
     if (!PAYSTACK_SECRET) {
       return res.json({
         reference,
@@ -110,9 +110,19 @@ router.get('/verify/:reference', billingAuth, async (req, res, next) => {
 
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res, next) => {
   try {
+    const signature = req.headers['x-paystack-signature'];
+    if (!PAYSTACK_SECRET || !signature || !Buffer.isBuffer(req.body)) {
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
     const hash = crypto.createHmac('sha512', PAYSTACK_SECRET).update(req.body).digest('hex');
-    if (hash !== req.headers['x-paystack-signature']) return res.status(401).json({ error: 'Invalid signature' });
+    const expected = Buffer.from(hash, 'hex');
+    const received = Buffer.from(String(signature), 'hex');
+    if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) {
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
     const event = JSON.parse(req.body);
+    // Event processing is deliberately idempotent elsewhere; do not log the
+    // payload because metadata can contain billing or patient identifiers.
     console.log('[Paystack webhook]', event.event);
     res.sendStatus(200);
   } catch (e) { next(e); }

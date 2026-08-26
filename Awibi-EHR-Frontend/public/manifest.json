@@ -1,0 +1,14 @@
+{
+  "name": "Awibi EHR",
+  "short_name": "Awibi EHR",
+  "description": "Electronic health records for African healthcare facilities",
+  "start_url": "/login",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#335CF4",
+  "icons": [
+    { "src": "/favicon.png", "sizes": "93x50", "type": "image/png" },
+    { "src": "/logo.png", "sizes": "187x52", "type": "image/png" }
+  ]
+}

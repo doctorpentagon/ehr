@@ -11,6 +11,10 @@ const { authenticate } = require('../middleware/auth');
 const { getPermissions } = require('../utils/permissions');
 const { generateStaffId } = require('../utils/upid');
 const { isStrongPassword } = require('../utils/passwords');
+const { JWT_SECRET, JWT_REFRESH_SECRET } = require('../config/jwt');
+const {
+  generateOtp, hashOtp, otpMatches, hashRefreshToken, refreshTokenMatches,
+} = require('../utils/authSecurity');
 
 const uuidv4 = () => randomUUID();
 const isUuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
@@ -19,12 +23,21 @@ const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { e
 const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 5, message: { error: 'Too many registrations from this IP — try again in an hour' }, standardHeaders: true, legacyHeaders: false });
 const forgotLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, message: { error: 'Too many password reset requests — try again in 15 minutes' }, standardHeaders: true, legacyHeaders: false });
 
-const COOKIE_OPTS = { httpOnly: true, sameSite: 'lax', maxAge: 7 * 24 * 3600 * 1000, secure: process.env.NODE_ENV === 'production' };
+const productionCookie = process.env.NODE_ENV === 'production';
+const COOKIE_BASE = {
+  httpOnly: true,
+  secure: productionCookie,
+  // Vercel and Render are different sites during the beta. Strict/Lax would
+  // suppress the refresh cookie on that cross-site request and log users out.
+  sameSite: productionCookie ? 'none' : 'lax',
+  path: '/v1/auth',
+};
+const COOKIE_OPTS = { ...COOKIE_BASE, maxAge: 7 * 24 * 3600 * 1000 };
 
 function issueTokens(user) {
-  const payload = { userId: user.id, role: user.role, subRole: user.subRole, facilityId: user.facilityId };
-  const accessToken = jwt.sign(payload, process.env.JWT_SECRET || 'awibi-secret', { expiresIn: process.env.JWT_EXPIRES_IN || '15m' });
-  const refreshToken = jwt.sign({ userId: user.id }, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'awibi-secret', { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' });
+  const payload = { userId: user.id, role: user.role, subRole: user.subRole, facilityId: user.facilityId, jti: uuidv4() };
+  const accessToken = jwt.sign(payload, JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '15m' });
+  const refreshToken = jwt.sign({ userId: user.id, jti: uuidv4() }, JWT_REFRESH_SECRET, { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' });
   return { accessToken, refreshToken };
 }
 
@@ -150,7 +163,7 @@ router.post('/local-demo-login', localDemoOnly, requireDemoCode, async (req, res
     const { accessToken, refreshToken } = issueTokens(user);
     await prisma.user.update({
       where: { id: user.id },
-      data: { lastLoginAt: new Date(), refreshToken },
+      data: { lastLoginAt: new Date(), refreshToken: hashRefreshToken(refreshToken) },
     });
     res.cookie('refreshToken', refreshToken, COOKIE_OPTS);
     const facility = await loadFacility(user.facilityId);
@@ -165,8 +178,8 @@ router.post('/register', registerLimiter, async (req, res, next) => {
     if (!firstName || !lastName || !email || !password) {
       return res.status(400).json({ error: 'firstName, lastName, email, password are required' });
     }
-    if (password.length < 8) {
-      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    if (!isStrongPassword(password)) {
+      return res.status(400).json({ error: 'Password must be at least 12 characters with upper, lower, number, and symbol' });
     }
 
     const exists = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
@@ -187,7 +200,7 @@ router.post('/register', registerLimiter, async (req, res, next) => {
     const limits = PLAN_LIMITS[normalPlan] || PLAN_LIMITS.FREE;
 
     const hash = await bcrypt.hash(password, 12);
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otp = generateOtp();
     const otpExp = new Date(Date.now() + 10 * 60 * 1000);
 
     // Atomic: create facility + subscription + user in one transaction
@@ -219,7 +232,7 @@ router.post('/register', registerLimiter, async (req, res, next) => {
           passwordHash: hash,
           role: 'ADMIN',
           facilityId: fac?.id || null,
-          otpCode: otp,
+          otpCode: hashOtp(otp),
           otpExpiresAt: otpExp,
           emailVerified: process.env.NODE_ENV === 'development',
         },
@@ -232,7 +245,7 @@ router.post('/register', registerLimiter, async (req, res, next) => {
     }
 
     const { accessToken, refreshToken } = issueTokens(user);
-    await prisma.user.update({ where: { id: user.id }, data: { refreshToken } });
+    await prisma.user.update({ where: { id: user.id }, data: { refreshToken: hashRefreshToken(refreshToken) } });
     res.cookie('refreshToken', refreshToken, COOKIE_OPTS);
     res.status(201).json({
       message: process.env.NODE_ENV === 'development' ? 'Registered (dev: email verification skipped)' : 'Check your email for OTP',
@@ -254,7 +267,7 @@ router.post('/login', loginLimiter, (req, res, next) => {
     }
     try {
       const { accessToken, refreshToken } = issueTokens(user);
-      await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), refreshToken } });
+      await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), refreshToken: hashRefreshToken(refreshToken) } });
       res.cookie('refreshToken', refreshToken, COOKIE_OPTS);
       const facility = await loadFacility(user.facilityId);
       res.json({ accessToken, user: userResponse(user), facility });
@@ -269,7 +282,7 @@ router.post('/staff-login', (req, res, next) => {
     if (!user) return res.status(401).json({ error: info?.message || 'Invalid Staff ID or password' });
     try {
       const { accessToken, refreshToken } = issueTokens(user);
-      await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), refreshToken } });
+      await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), refreshToken: hashRefreshToken(refreshToken) } });
       res.cookie('refreshToken', refreshToken, COOKIE_OPTS);
       const facility = await loadFacility(user.facilityId);
       res.json({ accessToken, user: userResponse(user), facility });
@@ -282,11 +295,11 @@ router.post('/refresh', async (req, res, next) => {
   try {
     const token = req.cookies?.refreshToken || req.body?.refreshToken;
     if (!token) return res.status(401).json({ error: 'No refresh token' });
-    const payload = jwt.verify(token, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET);
+    const payload = jwt.verify(token, JWT_REFRESH_SECRET);
     const user = await prisma.user.findUnique({ where: { id: payload.userId } });
-    if (!user || user.refreshToken !== token) return res.status(401).json({ error: 'Invalid refresh token' });
+    if (!user || !refreshTokenMatches(user.refreshToken, token)) return res.status(401).json({ error: 'Invalid refresh token' });
     const { accessToken, refreshToken: newRefresh } = issueTokens(user);
-    await prisma.user.update({ where: { id: user.id }, data: { refreshToken: newRefresh } });
+    await prisma.user.update({ where: { id: user.id }, data: { refreshToken: hashRefreshToken(newRefresh) } });
     res.cookie('refreshToken', newRefresh, COOKIE_OPTS);
     res.json({ accessToken, user: userResponse(user) });
   } catch (_) { res.status(401).json({ error: 'Invalid or expired refresh token' }); }
@@ -296,7 +309,7 @@ router.post('/refresh', async (req, res, next) => {
 router.post('/logout', authenticate, async (req, res, next) => {
   try {
     await prisma.user.update({ where: { id: req.ctx.userId }, data: { refreshToken: null } });
-    res.clearCookie('refreshToken');
+    res.clearCookie('refreshToken', COOKIE_BASE);
     res.json({ message: 'Logged out' });
   } catch (e) { next(e); }
 });
@@ -307,13 +320,13 @@ router.post('/verify-otp', async (req, res, next) => {
     const { email, otp } = req.body;
     const user = await prisma.user.findUnique({ where: { email: email?.toLowerCase() } });
     if (!user) return res.status(404).json({ error: 'User not found' });
-    if (user.otpCode !== otp) return res.status(400).json({ error: 'Invalid OTP' });
+    if (!otpMatches(user.otpCode, otp)) return res.status(400).json({ error: 'Invalid OTP' });
     if (new Date() > new Date(user.otpExpiresAt)) return res.status(400).json({ error: 'OTP expired — request a new one' });
 
     const { accessToken, refreshToken } = issueTokens(user);
     await prisma.user.update({
       where: { id: user.id },
-      data: { emailVerified: true, otpCode: null, otpExpiresAt: null, refreshToken },
+      data: { emailVerified: true, otpCode: null, otpExpiresAt: null, refreshToken: hashRefreshToken(refreshToken) },
     });
     res.cookie('refreshToken', refreshToken, COOKIE_OPTS);
 
@@ -332,8 +345,8 @@ router.post('/resend-otp', async (req, res, next) => {
     const { email } = req.body;
     const user = await prisma.user.findUnique({ where: { email: email?.toLowerCase() } });
     if (!user) return res.status(404).json({ error: 'User not found' });
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
-    await prisma.user.update({ where: { id: user.id }, data: { otpCode: otp, otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000) } });
+    const otp = generateOtp();
+    await prisma.user.update({ where: { id: user.id }, data: { otpCode: hashOtp(otp), otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000) } });
     await sendOTP(email, user.firstName, otp);
     res.json({ message: 'OTP sent' });
   } catch (e) { next(e); }
@@ -404,7 +417,7 @@ router.get('/google/callback', (req, res, next) => {
       return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/login?error=google_failed`);
     }
     const { accessToken, refreshToken } = issueTokens(user);
-    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), refreshToken } });
+    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), refreshToken: hashRefreshToken(refreshToken) } });
     res.cookie('refreshToken', refreshToken, COOKIE_OPTS);
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     res.redirect(`${frontendUrl}/auth/google?token=${encodeURIComponent(accessToken)}`);

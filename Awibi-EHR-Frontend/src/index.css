@@ -121,6 +121,10 @@
     -webkit-font-smoothing: antialiased;
     font-family: "Figtree", system-ui, sans-serif;
   }
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 3px solid #2563eb;
+    outline-offset: 2px;
+  }
 }
 
 ::-webkit-scrollbar { width: 5px; height: 5px; }

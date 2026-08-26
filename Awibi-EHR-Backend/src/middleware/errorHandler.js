@@ -1,4 +1,5 @@
 const logger = require('../utils/logger');
+const { requestRoute } = require('./requestContext');
 
 /**
  * Upload failures are the user's problem to fix, not a server fault. Multer
@@ -26,12 +27,23 @@ function errorHandler(err, req, res, next) {
   const status = err.status || err.statusCode || 500;
   // Log all errors server-side
   if (status >= 500) {
-    logger.error(err.message, { stack: err.stack, path: req.path, method: req.method });
+    logger.error(err.message, {
+      stack: err.stack,
+      route: requestRoute(req),
+      method: req.method,
+      requestId: req.id,
+      facilityId: req.ctx?.facilityId || null,
+      userId: req.ctx?.userId || null,
+    });
   }
   // In dev, return real error message so you can see what's failing
   const isDev = process.env.NODE_ENV !== 'production';
   const message = isDev ? (err.message || 'Internal server error') : (status < 500 ? err.message : 'Internal server error');
-  res.status(status).json({ error: message, ...(isDev && status >= 500 ? { details: err.stack?.split('\n')[0] } : {}) });
+  res.status(status).json({
+    error: message,
+    requestId: req.id,
+    ...(isDev && status >= 500 ? { details: err.stack?.split('\n')[0] } : {}),
+  });
 }
 
 function notFound(req, res) {

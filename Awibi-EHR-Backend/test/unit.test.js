@@ -13,6 +13,10 @@ const { listWorkflows, workflowFor, validateWorkflowPrefix } = require('../src/u
 const { loadScout } = require('./helpers/scout');
 const { scoutIndex, scoutEntries, scoutSearch, scoutCalculate } = loadScout();
 const { tenant } = require('../src/middleware/tenant');
+const {
+  generateOtp, hashOtp, otpMatches, hashRefreshToken, refreshTokenMatches,
+} = require('../src/utils/authSecurity');
+const { requestRoute } = require('../src/middleware/requestContext');
 
 
 test('UPIDs use the unambiguous AWB format', () => {
@@ -23,6 +27,33 @@ test('UPIDs use the unambiguous AWB format', () => {
 
 test('staff IDs include the facility code and six digits', () => {
   assert.match(generateStaffId('UCH'), /^UCH-STF-\d{6}$/);
+});
+
+test('OTPs use cryptographic six-digit generation and are stored hashed', () => {
+  const generated = new Set(Array.from({ length: 100 }, generateOtp));
+  assert.equal(generated.size > 95, true);
+  for (const otp of generated) assert.match(otp, /^\d{6}$/);
+  const stored = hashOtp('123456');
+  assert.notEqual(stored, '123456');
+  assert.equal(otpMatches(stored, '123456'), true);
+  assert.equal(otpMatches(stored, '123457'), false);
+});
+
+test('refresh tokens are compared by digest with one-release legacy compatibility', () => {
+  const token = 'signed-refresh-token-value';
+  const stored = hashRefreshToken(token);
+  assert.notEqual(stored, token);
+  assert.equal(refreshTokenMatches(stored, token), true);
+  assert.equal(refreshTokenMatches(stored, `${token}-wrong`), false);
+  assert.equal(refreshTokenMatches(token, token), true);
+});
+
+test('request logging keeps route shape without patient identifiers', () => {
+  assert.equal(requestRoute({ baseUrl: '/v1/patients', route: { path: '/:id' } }), '/v1/patients/:id');
+  assert.equal(
+    requestRoute({ path: '/v1/patients/19d8a814-96ec-4c73-b105-1a94de736dba/AWB-TEST2PAT' }),
+    '/v1/patients/:id/:healthId',
+  );
 });
 
 test('doctor monitoring-order options map to real nursing chart templates', () => {
