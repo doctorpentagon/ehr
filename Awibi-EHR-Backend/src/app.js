@@ -75,7 +75,19 @@ if (process.env.NODE_ENV === 'production') {
   console.log(`  CORS allows: ${origins.join(', ')}`);
 }
 
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many requests' } }));
+app.use(rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 500,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests' },
+  // The exhaustive local QA suites intentionally make hundreds of requests in
+  // a few minutes. Counting those against the Vite proxy's single IP locks the
+  // human tester out immediately after a successful run. This exception is
+  // limited to the explicitly local demo flag; server.js already refuses that
+  // flag in production. Hosted demos and real deployments keep the limiter.
+  skip: () => process.env.LOCAL_DEMO_ACCESS === 'true' && process.env.NODE_ENV !== 'production',
+}));
 
 // ── Parsers ─────────────────────────────────────────────────────────────────
 // Paystack signatures cover the exact request bytes. Both legacy and current
