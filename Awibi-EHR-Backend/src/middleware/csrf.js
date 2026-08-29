@@ -3,9 +3,13 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 // Paths that authenticate by their own signed payload, not the auth cookie, so
 // the double-submit check does not apply. Paystack webhooks carry an
 // HMAC-SHA512 signature over the raw body and never present a browser cookie.
+// /auth/refresh is authenticated by the signed refresh-token cookie and only
+// rotates tokens back into the caller's own browser, so a forged refresh gains
+// an attacker nothing; the SPA also calls it without the CSRF header.
 const CSRF_EXEMPT_PREFIXES = [
   '/v1/billing/paystack-webhook',
   '/v1/paystack/webhook',
+  '/v1/auth/refresh',
 ];
 
 // Double-submit CSRF guard. A cross-site sameSite=none auth cookie is attached
