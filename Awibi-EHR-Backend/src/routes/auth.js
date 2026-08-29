@@ -34,6 +34,36 @@ const COOKIE_BASE = {
 };
 const COOKIE_OPTS = { ...COOKIE_BASE, maxAge: 7 * 24 * 3600 * 1000 };
 
+// The access token is sent to every /v1 route, so its cookie path is the site
+// root, not /v1/auth. httpOnly keeps it unreadable from JS: an XSS can act
+// within the page but cannot exfiltrate a clinician's credential and replay it.
+const ACCESS_COOKIE_OPTS = {
+  httpOnly: true,
+  secure: productionCookie,
+  sameSite: productionCookie ? 'none' : 'lax',
+  path: '/',
+  maxAge: 15 * 60 * 1000,
+};
+
+// Double-submit CSRF. A sameSite=none auth cookie is sent automatically on
+// cross-site requests, so the browser alone no longer proves intent. This
+// cookie is deliberately NOT httpOnly: the SPA reads it and echoes it in the
+// X-CSRF-Token header, and requireCsrf checks header === cookie. An attacker
+// page cannot read our cookie (same-origin policy) so cannot forge the header.
+const CSRF_COOKIE_OPTS = {
+  httpOnly: false,
+  secure: productionCookie,
+  sameSite: productionCookie ? 'none' : 'lax',
+  path: '/',
+  maxAge: 7 * 24 * 3600 * 1000,
+};
+
+// Set access + CSRF cookies alongside the refresh cookie on every token issue.
+function setAuthCookies(res, accessToken) {
+  res.cookie('accessToken', accessToken, ACCESS_COOKIE_OPTS);
+  res.cookie('csrfToken', randomUUID(), CSRF_COOKIE_OPTS);
+}
+
 function issueTokens(user) {
   const payload = { userId: user.id, role: user.role, subRole: user.subRole, facilityId: user.facilityId, jti: uuidv4() };
   const accessToken = jwt.sign(payload, JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '15m' });
@@ -166,6 +196,7 @@ router.post('/local-demo-login', localDemoOnly, requireDemoCode, async (req, res
       data: { lastLoginAt: new Date(), refreshToken: hashRefreshToken(refreshToken) },
     });
     res.cookie('refreshToken', refreshToken, COOKIE_OPTS);
+    setAuthCookies(res, accessToken);
     const facility = await loadFacility(user.facilityId);
     res.json({ accessToken, user: userResponse(user), facility, localDemo: true });
   } catch (err) { next(err); }
@@ -247,6 +278,7 @@ router.post('/register', registerLimiter, async (req, res, next) => {
     const { accessToken, refreshToken } = issueTokens(user);
     await prisma.user.update({ where: { id: user.id }, data: { refreshToken: hashRefreshToken(refreshToken) } });
     res.cookie('refreshToken', refreshToken, COOKIE_OPTS);
+    setAuthCookies(res, accessToken);
     res.status(201).json({
       message: process.env.NODE_ENV === 'development' ? 'Registered (dev: email verification skipped)' : 'Check your email for OTP',
       accessToken,
@@ -269,6 +301,7 @@ router.post('/login', loginLimiter, (req, res, next) => {
       const { accessToken, refreshToken } = issueTokens(user);
       await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), refreshToken: hashRefreshToken(refreshToken) } });
       res.cookie('refreshToken', refreshToken, COOKIE_OPTS);
+    setAuthCookies(res, accessToken);
       const facility = await loadFacility(user.facilityId);
       res.json({ accessToken, user: userResponse(user), facility });
     } catch (e) { next(e); }
@@ -284,6 +317,7 @@ router.post('/staff-login', (req, res, next) => {
       const { accessToken, refreshToken } = issueTokens(user);
       await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), refreshToken: hashRefreshToken(refreshToken) } });
       res.cookie('refreshToken', refreshToken, COOKIE_OPTS);
+    setAuthCookies(res, accessToken);
       const facility = await loadFacility(user.facilityId);
       res.json({ accessToken, user: userResponse(user), facility });
     } catch (e) { next(e); }
@@ -301,6 +335,7 @@ router.post('/refresh', async (req, res, next) => {
     const { accessToken, refreshToken: newRefresh } = issueTokens(user);
     await prisma.user.update({ where: { id: user.id }, data: { refreshToken: hashRefreshToken(newRefresh) } });
     res.cookie('refreshToken', newRefresh, COOKIE_OPTS);
+    setAuthCookies(res, accessToken);
     res.json({ accessToken, user: userResponse(user) });
   } catch (_) { res.status(401).json({ error: 'Invalid or expired refresh token' }); }
 });
@@ -310,6 +345,8 @@ router.post('/logout', authenticate, async (req, res, next) => {
   try {
     await prisma.user.update({ where: { id: req.ctx.userId }, data: { refreshToken: null } });
     res.clearCookie('refreshToken', COOKIE_BASE);
+    res.clearCookie('accessToken', { ...ACCESS_COOKIE_OPTS, maxAge: undefined });
+    res.clearCookie('csrfToken', { ...CSRF_COOKIE_OPTS, maxAge: undefined });
     res.json({ message: 'Logged out' });
   } catch (e) { next(e); }
 });
@@ -329,6 +366,7 @@ router.post('/verify-otp', async (req, res, next) => {
       data: { emailVerified: true, otpCode: null, otpExpiresAt: null, refreshToken: hashRefreshToken(refreshToken) },
     });
     res.cookie('refreshToken', refreshToken, COOKIE_OPTS);
+    setAuthCookies(res, accessToken);
 
     const facility = await loadFacility(user.facilityId);
     let subscription = null;
@@ -419,8 +457,12 @@ router.get('/google/callback', (req, res, next) => {
     const { accessToken, refreshToken } = issueTokens(user);
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), refreshToken: hashRefreshToken(refreshToken) } });
     res.cookie('refreshToken', refreshToken, COOKIE_OPTS);
+    setAuthCookies(res, accessToken);
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    res.redirect(`${frontendUrl}/auth/google?token=${encodeURIComponent(accessToken)}`);
+    // The access token now rides in the httpOnly cookie set above, never in the
+    // URL. A token in a query string leaks into browser history, referrer
+    // headers and server logs. The frontend calls /auth/me to hydrate.
+    res.redirect(`${frontendUrl}/auth/google`);
   })(req, res, next);
 });
 
