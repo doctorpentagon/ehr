@@ -54,7 +54,6 @@ export default function Register() {
       if (data.requiresOtp) {
         navigate('/verify-otp', { state: { email: form.email } });
       } else {
-        if (data.accessToken) localStorage.setItem('accessToken', data.accessToken);
         dispatch(setCredentials({ user: data.user, facility: data.facility }));
         navigate('/dashboard');
       }
