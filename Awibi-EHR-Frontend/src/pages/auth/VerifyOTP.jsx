@@ -34,7 +34,6 @@ export default function VerifyOTP() {
     setLoading(true);
     try {
       const { data } = await api.post('/auth/verify-otp', { email, otp: code });
-      if (data.accessToken) localStorage.setItem('accessToken', data.accessToken);
       dispatch(setCredentials({ user: data.user, facility: data.facility ?? null, subscription: data.subscription ?? null }));
       navigate('/dashboard');
     } catch (err) {

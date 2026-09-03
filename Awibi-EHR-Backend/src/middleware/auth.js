@@ -4,11 +4,14 @@ const { JWT_SECRET } = require('../config/jwt');
 
 async function authenticate(req, res, next) {
   try {
+    // Prefer the httpOnly cookie (browser sessions); fall back to the Bearer
+    // header for API clients and during the transition off localStorage.
     const header = req.headers.authorization;
-    if (!header || !header.startsWith('Bearer ')) {
+    const token = req.cookies?.accessToken
+      || (header && header.startsWith('Bearer ') ? header.slice(7) : null);
+    if (!token) {
       return res.status(401).json({ error: 'No token provided' });
     }
-    const token = header.slice(7);
     const payload = jwt.verify(token, JWT_SECRET);
     const user = await prisma.user.findUnique({
       where: { id: payload.userId },
@@ -46,8 +49,9 @@ async function authenticate(req, res, next) {
 async function optionalAuth(req, res, next) {
   try {
     const header = req.headers.authorization;
-    if (header && header.startsWith('Bearer ')) {
-      const token = header.slice(7);
+    const token = req.cookies?.accessToken
+      || (header && header.startsWith('Bearer ') ? header.slice(7) : null);
+    if (token) {
       const payload = jwt.verify(token, JWT_SECRET);
       const user = await prisma.user.findUnique({ where: { id: payload.userId } });
       if (user) {

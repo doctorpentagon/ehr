@@ -14,23 +14,22 @@ export default function GoogleCallback() {
     if (ran.current) return;
     ran.current = true;
 
-    const token = searchParams.get('token');
     const error = searchParams.get('error');
 
-    if (error || !token) {
+    if (error) {
       navigate('/login?error=google_failed', { replace: true });
       return;
     }
 
-    localStorage.setItem('accessToken', token);
-
+    // The backend set the httpOnly access + csrf cookies before redirecting
+    // here — nothing to read from the URL. fetchMe rides the cookie via
+    // withCredentials to hydrate the session.
     dispatch(fetchMe())
       .unwrap()
-      .then(({ user, facility, subscription }) => {
+      .then(({ user }) => {
         navigate(user?.role === 'SUPER_ADMIN' ? '/dashboard/platform' : '/dashboard', { replace: true });
       })
       .catch(() => {
-        localStorage.removeItem('accessToken');
         navigate('/login?error=google_failed', { replace: true });
       });
   }, []);

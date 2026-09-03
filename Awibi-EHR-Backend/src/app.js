@@ -10,6 +10,7 @@ const passport = require('./config/passport');
 const routes = require('./routes');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 const { requestContext } = require('./middleware/requestContext');
+const { requireCsrf } = require('./middleware/csrf');
 
 const app = express();
 
@@ -107,6 +108,12 @@ if (process.env.NODE_ENV === 'development') app.use(morgan('dev'));
 
 // ── Passport ────────────────────────────────────────────────────────────────
 app.use(passport.initialize());
+
+// ── CSRF (double-submit) ────────────────────────────────────────────────────
+// Runs after cookie-parser (needs req.cookies) and before the routes. Only
+// gates cookie-authenticated state-changing requests; safe methods, the raw
+// Paystack webhooks, and Bearer-only API clients pass through.
+app.use('/v1', requireCsrf);
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 app.use('/v1', routes);

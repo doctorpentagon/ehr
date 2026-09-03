@@ -50,6 +50,7 @@ README.html
 **/.env
 **/.env.*
 !**/.env.example
+!**/.env.local.example
 # Generated production secrets. Plaintext on disk — never committed.
 *.local.txt
 PRODUCTION_SECRETS*

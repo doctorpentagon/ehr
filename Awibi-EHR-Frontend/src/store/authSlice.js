@@ -5,8 +5,7 @@ import { normalizeAuthError } from '@/lib/authErrors';
 export const login = createAsyncThunk('auth/login', async ({ email, password }, { rejectWithValue }) => {
   try {
     const res = await api.post('/auth/login', { email, password });
-    const { accessToken, user, facility } = res.data;
-    if (accessToken) localStorage.setItem('accessToken', accessToken);
+    const { user, facility } = res.data;
     return { user, facility };
   } catch (err) {
     return rejectWithValue(normalizeAuthError(err, 'Invalid credentials'));
@@ -17,8 +16,7 @@ export const demoLogin = createAsyncThunk('auth/demoLogin', async ({ userId, acc
   try {
     // A hosted demo may require a shared code; a local one never does.
     const res = await api.post('/auth/local-demo-login', { userId, ...(accessCode ? { accessCode } : {}) });
-    const { accessToken, user, facility } = res.data;
-    if (accessToken) localStorage.setItem('accessToken', accessToken);
+    const { user, facility } = res.data;
     return { user, facility };
   } catch (err) {
     return rejectWithValue(normalizeAuthError(err, 'Could not enter the demo'));
@@ -42,7 +40,7 @@ export const logout = createAsyncThunk('auth/logout', async (_, { rejectWithValu
   try {
     await api.post('/auth/logout');
   } catch (_) {}
-  localStorage.removeItem('accessToken');
+  // The server clears the httpOnly access/refresh/csrf cookies on this call.
   return null;
 });
 
@@ -53,9 +51,12 @@ const authSlice = createSlice({
     facility: null,
     subscription: null,
     isAuthenticated: false,
-    // True only on a cold load where there's a token but no persisted user yet.
-    // When redux-persist rehydrates isAuthenticated=true, fetchMe.pending skips the spinner.
-    loading: !!localStorage.getItem('accessToken'),
+    // The access token is now an httpOnly cookie JS cannot read, so we no
+    // longer probe localStorage for it. redux-persist rehydrates
+    // isAuthenticated and fetchMe re-validates against the cookie on load.
+    // Start non-loading; the cold-load spinner is driven by fetchMe.pending
+    // below, which only blocks when there is no persisted session.
+    loading: false,
     error: null,
   },
   reducers: {

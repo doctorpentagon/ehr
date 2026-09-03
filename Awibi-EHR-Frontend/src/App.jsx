@@ -156,10 +156,13 @@ function DashboardHome() {
 
 export default function App() {
   const dispatch = useDispatch();
-  const token = localStorage.getItem('accessToken');
+  // The access token is now an httpOnly cookie JS cannot read. redux-persist
+  // rehydrates whether a session was established; if so, re-validate it against
+  // the cookie via fetchMe. If not, there is nothing to restore.
+  const wasAuthenticated = useSelector((s) => s.auth.isAuthenticated);
 
   useEffect(() => {
-    if (token) {
+    if (wasAuthenticated) {
       dispatch(fetchMe())
         .unwrap()
         .catch((err) => {
@@ -172,7 +175,7 @@ export default function App() {
           }
         });
     } else {
-      // No token — clear loading state immediately so PrivateRoute redirects without a spinner
+      // No persisted session — clear loading state immediately so PrivateRoute redirects without a spinner
       dispatch(clearAuth());
     }
   }, []);

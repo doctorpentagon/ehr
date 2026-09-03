@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { toast } from 'sonner';
 import { enqueue } from './offlineQueue';
-import { offlineOwnerKeyFromToken } from './offlinePolicy';
+import { currentOfflineOwnerKey } from './offlinePolicy';
 
 /**
  * Where the API lives.
@@ -31,10 +31,22 @@ const api = axios.create({
   timeout: 20000, // 20-second timeout — prevents indefinite hang when Supabase is paused
 });
 
-// Attach access token from memory
+// Read the non-httpOnly CSRF cookie the backend sets on login/refresh, so we
+// can echo it on state-changing requests (double-submit). The access token
+// itself is now an httpOnly cookie the browser attaches automatically via
+// withCredentials — JS never reads or sends it, which is the point.
+function readCsrfToken() {
+  const match = document.cookie.match(/(?:^|;\s*)csrfToken=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+const MUTATING_METHODS = new Set(['post', 'put', 'patch', 'delete']);
+
 api.interceptors.request.use(cfg => {
-  const token = localStorage.getItem('accessToken');
-  if (token) cfg.headers.Authorization = `Bearer ${token}`;
+  if (MUTATING_METHODS.has((cfg.method || '').toLowerCase())) {
+    const csrf = readCsrfToken();
+    if (csrf) cfg.headers['X-CSRF-Token'] = csrf;
+  }
   return cfg;
 });
 
@@ -65,25 +77,21 @@ api.interceptors.response.use(
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
-        }).then(token => {
-          original.headers.Authorization = `Bearer ${token}`;
-          return api(original);
-        });
+        }).then(() => api(original));
       }
       original._retry = true;
       isRefreshing = true;
       try {
         // Bare axios, not the instance — so it must resolve the host the same
         // way, or a deployed session silently fails to refresh and the user is
-        // logged out after fifteen minutes with no explanation.
-        const { data } = await axios.post(`${resolveBaseUrl()}/auth/refresh`, {}, { withCredentials: true });
-        localStorage.setItem('accessToken', data.accessToken);
-        processQueue(null, data.accessToken);
-        original.headers.Authorization = `Bearer ${data.accessToken}`;
+        // logged out after fifteen minutes with no explanation. The refreshed
+        // access + csrf cookies are set by the server on this response; nothing
+        // to store client-side, so just retry the queued requests.
+        await axios.post(`${resolveBaseUrl()}/auth/refresh`, {}, { withCredentials: true });
+        processQueue(null);
         return api(original);
       } catch (refreshErr) {
         processQueue(refreshErr, null);
-        localStorage.removeItem('accessToken');
         window.location.href = '/login';
         return Promise.reject(refreshErr);
       } finally {
@@ -105,8 +113,7 @@ api.interceptors.response.use(
 
     if (isMutation && isNetworkError) {
       try {
-        const token = localStorage.getItem('accessToken');
-        const ownerKey = offlineOwnerKeyFromToken(token);
+        const ownerKey = currentOfflineOwnerKey();
         // File uploads cannot be represented safely as JSON, and anonymous
         // work cannot be tied to the staff member and facility that created it.
         if (!ownerKey || cfg.data instanceof FormData) return Promise.reject(err);
