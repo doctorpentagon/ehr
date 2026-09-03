@@ -4,7 +4,7 @@
 
 **Stack:** React · Vite · Node.js · Express · Prisma · PostgreSQL · JWT · Google OAuth · Paystack
 
-**Release position (26 August 2026):** suitable for controlled, synthetic-data beta testing only. It is not approved for real patient data, national deployment, full offline clinical use, or a claim of complete interoperability. See [CODE_QUALITY_AUDIT_RECONCILIATION_2026-08-26.md](CODE_QUALITY_AUDIT_RECONCILIATION_2026-08-26.md), [PRE_BETA_RELEASE_GATE_2026-08-23.md](PRE_BETA_RELEASE_GATE_2026-08-23.md), and `MANUAL_SETUP_REQUIRED.txt`.
+**Release position (3 September 2026):** suitable for controlled, synthetic-data beta testing only. It is not approved for real patient data, national deployment, full offline clinical use, or a claim of complete interoperability. See [CODE_QUALITY_AUDIT_RECONCILIATION_2026-08-26.md](CODE_QUALITY_AUDIT_RECONCILIATION_2026-08-26.md), [PRE_BETA_RELEASE_GATE_2026-08-23.md](PRE_BETA_RELEASE_GATE_2026-08-23.md), and `MANUAL_SETUP_REQUIRED.txt`.
 
 ---
 
@@ -214,6 +214,19 @@ beta convenience, not an authentication mode for live clinical data.
 
 None of this weakens the real login, which continues to work unchanged
 alongside it.
+
+The public landing page may link to the hosted beta as **Test beta system**.
+That link is separate from **Book a demo**, which remains the route for a
+20-minute guided facility discussion. The hosted beta must keep `DEMO_MODE`,
+its acknowledgement gate, its private access code, ordinary RBAC and facility
+scoping. It must contain invented records only. The current public beta login is
+`https://ehr-lovat.vercel.app/login`; set `VITE_BETA_SYSTEM_URL` on the landing
+deployment if that address changes.
+
+The authentication pages use a branded multidisciplinary hospital-workflow
+image on large screens and the existing compact form on smaller screens. This
+is presentation only: login endpoints, session handling, demo gates and role
+permissions are unchanged.
 
 ---
 
