@@ -23,9 +23,11 @@ jobs:
           cache: npm
           cache-dependency-path: Awibi-EHR-Backend/package-lock.json
       - run: npm ci
+      - run: npm run lint
       - run: npx prisma validate
         env:
           DATABASE_URL: postgresql://audit:audit@localhost:5432/audit
+          DIRECT_URL: postgresql://audit:audit@localhost:5432/audit
       - run: npm run test:unit
       - run: npm run test:contract
 
@@ -42,5 +44,6 @@ jobs:
           cache: npm
           cache-dependency-path: Awibi-EHR-Frontend/package-lock.json
       - run: npm ci
+      - run: npm run lint
       - run: npm run test:unit
       - run: npm run build
